@@ -89,7 +89,7 @@ uint32_t WiggleKitServer::particle_create(const Vector3 &p_position, float p_mas
 }
 
 void WiggleKitServer::particle_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, particles.size());
 	if (particles[p_id].active) {
 		particles[p_id].active = false;
 		free_indices.push_back(p_id);
@@ -157,7 +157,7 @@ void WiggleKitServer::particle_free(uint32_t p_id) {
 }
 
 void WiggleKitServer::particle_set_position(uint32_t p_id, const Vector3 &p_position) {
-	ERR_FAIL_INDEX(p_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, particles.size());
 	Particle &p = particles[p_id];
 	ERR_FAIL_COND(!p.active);
 	p.position = p_position;
@@ -165,57 +165,57 @@ void WiggleKitServer::particle_set_position(uint32_t p_id, const Vector3 &p_posi
 }
 
 Vector3 WiggleKitServer::particle_get_position(uint32_t p_id) const {
-	ERR_FAIL_INDEX_V(p_id, particles.size(), Vector3());
+	ERR_FAIL_UNSIGNED_INDEX_V(p_id, particles.size(), Vector3());
 	const Particle &p = particles[p_id];
 	ERR_FAIL_COND_V(!p.active, Vector3());
 	return p.position;
 }
 
 void WiggleKitServer::particle_set_mass(uint32_t p_id, float p_mass) {
-	ERR_FAIL_INDEX(p_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, particles.size());
 	Particle &p = particles[p_id];
 	ERR_FAIL_COND(!p.active);
 	p.inv_mass = p_mass > 0.00001f ? 1.0f / p_mass : 0.0f;
 }
 
 float WiggleKitServer::particle_get_mass(uint32_t p_id) const {
-	ERR_FAIL_INDEX_V(p_id, particles.size(), 0.0f);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_id, particles.size(), 0.0f);
 	const Particle &p = particles[p_id];
 	ERR_FAIL_COND_V(!p.active, 0.0f);
 	return p.inv_mass > 0.0f ? 1.0f / p.inv_mass : 0.0f;
 }
 
 void WiggleKitServer::particle_set_gravity(uint32_t p_id, const Vector3 &p_gravity) {
-	ERR_FAIL_INDEX(p_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, particles.size());
 	Particle &p = particles[p_id];
 	ERR_FAIL_COND(!p.active);
 	p.gravity = p_gravity;
 }
 
 Vector3 WiggleKitServer::particle_get_gravity(uint32_t p_id) const {
-	ERR_FAIL_INDEX_V(p_id, particles.size(), Vector3());
+	ERR_FAIL_UNSIGNED_INDEX_V(p_id, particles.size(), Vector3());
 	const Particle &p = particles[p_id];
 	ERR_FAIL_COND_V(!p.active, Vector3());
 	return p.gravity;
 }
 
 void WiggleKitServer::particle_set_damping(uint32_t p_id, float p_damping) {
-	ERR_FAIL_INDEX(p_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, particles.size());
 	Particle &p = particles[p_id];
 	ERR_FAIL_COND(!p.active);
 	p.damping = p_damping;
 }
 
 float WiggleKitServer::particle_get_damping(uint32_t p_id) const {
-	ERR_FAIL_INDEX_V(p_id, particles.size(), 0.0f);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_id, particles.size(), 0.0f);
 	const Particle &p = particles[p_id];
 	ERR_FAIL_COND_V(!p.active, 0.0f);
 	return p.damping;
 }
 
 uint32_t WiggleKitServer::distance_constraint_create(uint32_t p_particle_a, uint32_t p_particle_b, float p_compliance) {
-	ERR_FAIL_INDEX_V(p_particle_a, particles.size(), 0);
-	ERR_FAIL_INDEX_V(p_particle_b, particles.size(), 0);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_a, particles.size(), 0);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_b, particles.size(), 0);
 	ERR_FAIL_COND_V(!particles[p_particle_a].active, 0);
 	ERR_FAIL_COND_V(!particles[p_particle_b].active, 0);
 
@@ -239,7 +239,7 @@ uint32_t WiggleKitServer::distance_constraint_create(uint32_t p_particle_a, uint
 }
 
 void WiggleKitServer::distance_constraint_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, distance_constraints.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, distance_constraints.size());
 	if (distance_constraints[p_id].active) {
 		distance_constraints[p_id].active = false;
 		free_distance_indices.push_back(p_id);
@@ -247,13 +247,13 @@ void WiggleKitServer::distance_constraint_free(uint32_t p_id) {
 }
 
 uint32_t WiggleKitServer::tetrahedral_constraint_create(uint32_t p_particle_a, uint32_t p_particle_b, uint32_t p_particle_c, uint32_t p_particle_d, float p_compliance) {
-	ERR_FAIL_INDEX_V(p_particle_a, particles.size(), INVALID_ID);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_a, particles.size(), INVALID_ID);
 	ERR_FAIL_COND_V(!particles[p_particle_a].active, INVALID_ID);
-	ERR_FAIL_INDEX_V(p_particle_b, particles.size(), INVALID_ID);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_b, particles.size(), INVALID_ID);
 	ERR_FAIL_COND_V(!particles[p_particle_b].active, INVALID_ID);
-	ERR_FAIL_INDEX_V(p_particle_c, particles.size(), INVALID_ID);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_c, particles.size(), INVALID_ID);
 	ERR_FAIL_COND_V(!particles[p_particle_c].active, INVALID_ID);
-	ERR_FAIL_INDEX_V(p_particle_d, particles.size(), INVALID_ID);
+	ERR_FAIL_UNSIGNED_INDEX_V(p_particle_d, particles.size(), INVALID_ID);
 	ERR_FAIL_COND_V(!particles[p_particle_d].active, INVALID_ID);
 
 	uint32_t index;
@@ -285,7 +285,7 @@ uint32_t WiggleKitServer::tetrahedral_constraint_create(uint32_t p_particle_a, u
 }
 
 void WiggleKitServer::tetrahedral_constraint_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, tetrahedral_constraints.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, tetrahedral_constraints.size());
 	if (tetrahedral_constraints[p_id].active) {
 		tetrahedral_constraints[p_id].active = false;
 		free_tetrahedral_indices.push_back(p_id);
@@ -293,7 +293,7 @@ void WiggleKitServer::tetrahedral_constraint_free(uint32_t p_id) {
 }
 
 void WiggleKitServer::tetrahedral_constraint_set_compliance(uint32_t p_id, float p_compliance) {
-	ERR_FAIL_INDEX(p_id, tetrahedral_constraints.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, tetrahedral_constraints.size());
 	ERR_FAIL_COND(!tetrahedral_constraints[p_id].active);
 	tetrahedral_constraints[p_id].compliance = p_compliance;
 }
@@ -320,7 +320,7 @@ uint32_t WiggleKitServer::plane_collider_create(const Vector3 &p_position, const
 }
 
 void WiggleKitServer::plane_collider_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, plane_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, plane_colliders.size());
 	if (plane_colliders[p_id].active) {
 		plane_colliders[p_id].active = false;
 		free_plane_indices.push_back(p_id);
@@ -328,21 +328,21 @@ void WiggleKitServer::plane_collider_free(uint32_t p_id) {
 }
 
 void WiggleKitServer::plane_collider_set_position(uint32_t p_id, const Vector3 &p_position) {
-	ERR_FAIL_INDEX(p_id, plane_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, plane_colliders.size());
 	ERR_FAIL_COND(!plane_colliders[p_id].active);
 	plane_colliders[p_id].position = p_position;
 }
 
 void WiggleKitServer::plane_collider_set_normal(uint32_t p_id, const Vector3 &p_normal) {
-	ERR_FAIL_INDEX(p_id, plane_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, plane_colliders.size());
 	ERR_FAIL_COND(!plane_colliders[p_id].active);
 	plane_colliders[p_id].normal = p_normal.normalized();
 }
 
 void WiggleKitServer::plane_collider_add_particle(uint32_t p_id, uint32_t p_particle_id) {
-	ERR_FAIL_INDEX(p_id, plane_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, plane_colliders.size());
 	ERR_FAIL_COND(!plane_colliders[p_id].active);
-	ERR_FAIL_INDEX(p_particle_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_particle_id, particles.size());
 	ERR_FAIL_COND(!particles[p_particle_id].active);
 
 	plane_colliders[p_id].particles.push_back(p_particle_id);
@@ -371,7 +371,7 @@ uint32_t WiggleKitServer::sphere_collider_create(const Vector3 &p_position, floa
 }
 
 void WiggleKitServer::sphere_collider_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, sphere_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, sphere_colliders.size());
 	if (sphere_colliders[p_id].active) {
 		sphere_colliders[p_id].active = false;
 		free_sphere_indices.push_back(p_id);
@@ -379,21 +379,21 @@ void WiggleKitServer::sphere_collider_free(uint32_t p_id) {
 }
 
 void WiggleKitServer::sphere_collider_set_position(uint32_t p_id, const Vector3 &p_position) {
-	ERR_FAIL_INDEX(p_id, sphere_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, sphere_colliders.size());
 	ERR_FAIL_COND(!sphere_colliders[p_id].active);
 	sphere_colliders[p_id].position = p_position;
 }
 
 void WiggleKitServer::sphere_collider_set_radius(uint32_t p_id, float p_radius) {
-	ERR_FAIL_INDEX(p_id, sphere_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, sphere_colliders.size());
 	ERR_FAIL_COND(!sphere_colliders[p_id].active);
 	sphere_colliders[p_id].radius = p_radius;
 }
 
 void WiggleKitServer::sphere_collider_add_particle(uint32_t p_id, uint32_t p_particle_id) {
-	ERR_FAIL_INDEX(p_id, sphere_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, sphere_colliders.size());
 	ERR_FAIL_COND(!sphere_colliders[p_id].active);
-	ERR_FAIL_INDEX(p_particle_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_particle_id, particles.size());
 	ERR_FAIL_COND(!particles[p_particle_id].active);
 
 	sphere_colliders[p_id].particles.push_back(p_particle_id);
@@ -423,7 +423,7 @@ uint32_t WiggleKitServer::box_collider_create(const Vector3 &p_position, const B
 }
 
 void WiggleKitServer::box_collider_free(uint32_t p_id) {
-	ERR_FAIL_INDEX(p_id, box_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, box_colliders.size());
 	if (box_colliders[p_id].active) {
 		box_colliders[p_id].active = false;
 		free_box_indices.push_back(p_id);
@@ -431,27 +431,27 @@ void WiggleKitServer::box_collider_free(uint32_t p_id) {
 }
 
 void WiggleKitServer::box_collider_set_position(uint32_t p_id, const Vector3 &p_position) {
-	ERR_FAIL_INDEX(p_id, box_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, box_colliders.size());
 	ERR_FAIL_COND(!box_colliders[p_id].active);
 	box_colliders[p_id].position = p_position;
 }
 
 void WiggleKitServer::box_collider_set_basis(uint32_t p_id, const Basis &p_basis) {
-	ERR_FAIL_INDEX(p_id, box_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, box_colliders.size());
 	ERR_FAIL_COND(!box_colliders[p_id].active);
 	box_colliders[p_id].basis = p_basis;
 }
 
 void WiggleKitServer::box_collider_set_size(uint32_t p_id, const Vector3 &p_size) {
-	ERR_FAIL_INDEX(p_id, box_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, box_colliders.size());
 	ERR_FAIL_COND(!box_colliders[p_id].active);
 	box_colliders[p_id].size = p_size;
 }
 
 void WiggleKitServer::box_collider_add_particle(uint32_t p_id, uint32_t p_particle_id) {
-	ERR_FAIL_INDEX(p_id, box_colliders.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_id, box_colliders.size());
 	ERR_FAIL_COND(!box_colliders[p_id].active);
-	ERR_FAIL_INDEX(p_particle_id, particles.size());
+	ERR_FAIL_UNSIGNED_INDEX(p_particle_id, particles.size());
 	ERR_FAIL_COND(!particles[p_particle_id].active);
 
 	box_colliders[p_id].particles.push_back(p_particle_id);
