@@ -82,9 +82,6 @@ add_custom_command(
             ${BUILD_OUTPUT_DIR}
 )
 
-# Warnings
-include( CompilerWarnings )
-
 # Create and include version info file from git
 include( GitVersionInfo )
 

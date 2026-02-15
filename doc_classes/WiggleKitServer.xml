@@ -1,0 +1,675 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WiggleKitServer" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		An XPBD (Extended Position-Based Dynamics) physics server for particle-based simulations.
+	</brief_description>
+	<description>
+		WiggleKitServer provides an XPBD solver operating on particles, constraints, colliders, and signed distance field (SDF) constraints. Particles are the fundamental simulation elements with position, mass, gravity, damping, and velocity. Constraints (distance, tetrahedral, SDF) are solved during the XPBD projection phase with configurable compliance for soft or hard behavior. Colliders (plane, sphere, box) provide velocity-based collision response with bounciness and friction. SDF constraints (plane, sphere, line, box) keep particles at a signed distance from geometric primitives using XPBD projection.
+		All objects are referenced by integer IDs returned from their respective [code]create[/code] methods. Call [method iteration] to advance the simulation (each _physics_process is a good place, but you could totally run the iteration in a thread and simulate a few seconds for example).
+
+		There is one global instance that can be accessed with WiggleKit.[method function_name]. You still have to run the [method iteration] to advance the simulation, but you can use the WiggleKit.gd as an autoload.
+		You can create additional WiggleKitServer instances if that is useful for your project.
+	</description>
+	<methods>
+		<method name="get_singleton" qualifiers="static">
+			<return type="WiggleKitServer" />
+			<description>
+				Returns the singleton instance of the server.
+			</description>
+		</method>
+
+		<!-- Particles -->
+
+		<method name="particle_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mass" type="float" />
+			<param index="2" name="gravity" type="Vector3" />
+			<param index="3" name="damping" type="float" />
+			<description>
+				Creates a new particle at [param position] with the given [param mass], per-particle [param gravity] vector, and velocity [param damping] factor. A mass of [code]0[/code] makes the particle static (infinite mass). Returns the particle's ID.
+			</description>
+		</method>
+		<method name="particle_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the particle with the given [param id]. Automatically removes the particle from all constraints, colliders, and SDF constraints that reference it.
+			</description>
+		</method>
+		<method name="particle_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the position of the particle. Also resets the previous position, effectively zeroing the particle's velocity.
+			</description>
+		</method>
+		<method name="particle_get_position" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the current position of the particle.
+			</description>
+		</method>
+		<method name="particle_set_mass">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="mass" type="float" />
+			<description>
+				Sets the mass of the particle. A mass of [code]0[/code] (or very close to it) makes the particle static.
+			</description>
+		</method>
+		<method name="particle_get_mass" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the mass of the particle.
+			</description>
+		</method>
+		<method name="particle_set_gravity">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="gravity" type="Vector3" />
+			<description>
+				Sets the per-particle gravity vector. Defaults to [code]Vector3(0, -9.81, 0)[/code].
+			</description>
+		</method>
+		<method name="particle_get_gravity" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the per-particle gravity vector.
+			</description>
+		</method>
+		<method name="particle_set_damping">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="damping" type="float" />
+			<description>
+				Sets the velocity damping factor. Applied as exponential decay each substep: [code]velocity *= exp(-damping * dt)[/code]. A value of [code]0[/code] means no damping.
+			</description>
+		</method>
+		<method name="particle_get_damping" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the velocity damping factor.
+			</description>
+		</method>
+		<method name="particle_set_velocity">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="velocity" type="Vector3" />
+			<description>
+				Sets the velocity of the particle directly.
+			</description>
+		</method>
+		<method name="particle_get_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the current velocity of the particle.
+			</description>
+		</method>
+
+		<!-- Distance Constraints -->
+
+		<method name="distance_constraint_create">
+			<return type="int" />
+			<param index="0" name="particle_a" type="int" />
+			<param index="1" name="particle_b" type="int" />
+			<param index="2" name="compliance" type="float" />
+			<description>
+				Creates a distance constraint between two particles. The rest length is automatically computed from their current positions. [param compliance] controls softness: [code]0[/code] is perfectly rigid, larger values make the constraint softer. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="distance_constraint_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the distance constraint.
+			</description>
+		</method>
+		<method name="distance_constraint_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the distance constraint. A value of [code]0[/code] is rigid; larger values are softer.
+			</description>
+		</method>
+		<method name="distance_constraint_set_rest_length">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="rest_length" type="float" />
+			<description>
+				Overrides the rest length of the distance constraint.
+			</description>
+		</method>
+		<method name="distance_constraint_get_rest_length" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Returns the rest length of the distance constraint.
+			</description>
+		</method>
+
+		<!-- Tetrahedral Constraints -->
+
+		<method name="tetrahedral_constraint_create">
+			<return type="int" />
+			<param index="0" name="particle_a" type="int" />
+			<param index="1" name="particle_b" type="int" />
+			<param index="2" name="particle_c" type="int" />
+			<param index="3" name="particle_d" type="int" />
+			<param index="4" name="compliance" type="float" />
+			<description>
+				Creates a tetrahedral volume constraint between four particles. The rest volume is computed from their current positions. This constraint preserves the signed volume of the tetrahedron, useful for soft-body simulations. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="tetrahedral_constraint_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the tetrahedral constraint.
+			</description>
+		</method>
+		<method name="tetrahedral_constraint_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the tetrahedral constraint.
+			</description>
+		</method>
+
+		<!-- Plane Collider -->
+
+		<method name="plane_collider_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="normal" type="Vector3" />
+			<param index="2" name="bounciness" type="float" />
+			<param index="3" name="friction" type="float" />
+			<description>
+				Creates a plane collider at [param position] with the given surface [param normal]. [param bounciness] controls how much velocity is reflected on collision ([code]0[/code] = no bounce, [code]1[/code] = full reflection). [param friction] controls lateral velocity reduction on contact. Returns the collider's ID.
+			</description>
+		</method>
+		<method name="plane_collider_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the plane collider.
+			</description>
+		</method>
+		<method name="plane_collider_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the position of the plane collider.
+			</description>
+		</method>
+		<method name="plane_collider_set_normal">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="normal" type="Vector3" />
+			<description>
+				Sets the surface normal of the plane collider.
+			</description>
+		</method>
+		<method name="plane_collider_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this plane collider. Only particles added to a collider are tested for collision against it.
+			</description>
+		</method>
+		<method name="plane_collider_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this plane collider.
+			</description>
+		</method>
+
+		<!-- Sphere Collider -->
+
+		<method name="sphere_collider_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="bounciness" type="float" />
+			<param index="3" name="friction" type="float" />
+			<param index="4" name="inside" type="bool" default="false" />
+			<description>
+				Creates a sphere collider at [param position] with the given [param radius]. When [param inside] is [code]true[/code], particles are kept inside the sphere; when [code]false[/code], particles are pushed outside. Returns the collider's ID.
+			</description>
+		</method>
+		<method name="sphere_collider_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the sphere collider.
+			</description>
+		</method>
+		<method name="sphere_collider_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the position of the sphere collider.
+			</description>
+		</method>
+		<method name="sphere_collider_set_radius">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				Sets the radius of the sphere collider.
+			</description>
+		</method>
+		<method name="sphere_collider_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this sphere collider.
+			</description>
+		</method>
+		<method name="sphere_collider_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this sphere collider.
+			</description>
+		</method>
+
+		<!-- Box Collider -->
+
+		<method name="box_collider_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="basis" type="Basis" />
+			<param index="2" name="size" type="Vector3" />
+			<param index="3" name="bounciness" type="float" />
+			<param index="4" name="friction" type="float" />
+			<param index="5" name="inside" type="bool" default="false" />
+			<description>
+				Creates an oriented box collider at [param position] with orientation [param basis] and full extents [param size] (width, height, depth). When [param inside] is [code]true[/code], particles are kept inside the box. Returns the collider's ID.
+			</description>
+		</method>
+		<method name="box_collider_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the box collider.
+			</description>
+		</method>
+		<method name="box_collider_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the position of the box collider.
+			</description>
+		</method>
+		<method name="box_collider_set_basis">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="basis" type="Basis" />
+			<description>
+				Sets the orientation basis of the box collider.
+			</description>
+		</method>
+		<method name="box_collider_set_size">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="size" type="Vector3" />
+			<description>
+				Sets the full extents (width, height, depth) of the box collider.
+			</description>
+		</method>
+		<method name="box_collider_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this box collider.
+			</description>
+		</method>
+		<method name="box_collider_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this box collider.
+			</description>
+		</method>
+
+		<!-- Plane SDF -->
+
+		<method name="plane_sdf_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="normal" type="Vector3" />
+			<param index="2" name="rest_distance" type="float" />
+			<param index="3" name="compliance" type="float" />
+			<description>
+				Creates a plane SDF constraint. Particles added to this constraint will be kept at [param rest_distance] from the plane defined by [param position] and [param normal], using XPBD projection. The constraint function is [code]C = dot(pos - position, normal) - rest_distance[/code]. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="plane_sdf_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the plane SDF constraint and its particle list.
+			</description>
+		</method>
+		<method name="plane_sdf_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the position of the plane SDF constraint.
+			</description>
+		</method>
+		<method name="plane_sdf_set_normal">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="normal" type="Vector3" />
+			<description>
+				Sets the normal of the plane SDF constraint. The normal is automatically normalized.
+			</description>
+		</method>
+		<method name="plane_sdf_set_rest_distance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="rest_distance" type="float" />
+			<description>
+				Sets the target signed distance from the plane surface.
+			</description>
+		</method>
+		<method name="plane_sdf_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the plane SDF constraint. [code]0[/code] is rigid; larger values are softer.
+			</description>
+		</method>
+		<method name="plane_sdf_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this plane SDF constraint.
+			</description>
+		</method>
+		<method name="plane_sdf_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this plane SDF constraint.
+			</description>
+		</method>
+
+		<!-- Sphere SDF -->
+
+		<method name="sphere_sdf_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="rest_distance" type="float" />
+			<param index="3" name="compliance" type="float" />
+			<description>
+				Creates a sphere SDF constraint. Particles will be kept at [param rest_distance] from the sphere surface defined by [param position] and [param radius]. The constraint function is [code]C = |pos - position| - radius - rest_distance[/code]. Positive rest distance keeps particles outside; negative pushes them inside. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="sphere_sdf_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the sphere SDF constraint and its particle list.
+			</description>
+		</method>
+		<method name="sphere_sdf_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the center position of the sphere SDF constraint.
+			</description>
+		</method>
+		<method name="sphere_sdf_set_radius">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="radius" type="float" />
+			<description>
+				Sets the radius of the sphere SDF constraint.
+			</description>
+		</method>
+		<method name="sphere_sdf_set_rest_distance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="rest_distance" type="float" />
+			<description>
+				Sets the target signed distance from the sphere surface.
+			</description>
+		</method>
+		<method name="sphere_sdf_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the sphere SDF constraint.
+			</description>
+		</method>
+		<method name="sphere_sdf_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this sphere SDF constraint.
+			</description>
+		</method>
+		<method name="sphere_sdf_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this sphere SDF constraint.
+			</description>
+		</method>
+
+		<!-- Line SDF -->
+
+		<method name="line_sdf_create">
+			<return type="int" />
+			<param index="0" name="position_a" type="Vector3" />
+			<param index="1" name="position_b" type="Vector3" />
+			<param index="2" name="rest_distance" type="float" />
+			<param index="3" name="compliance" type="float" />
+			<param index="4" name="infinite" type="bool" default="true" />
+			<description>
+				Creates a line SDF constraint defined by two points [param position_a] and [param position_b]. Particles will be kept at [param rest_distance] from the line. When [param infinite] is [code]true[/code], the line extends infinitely in both directions. When [code]false[/code], the constraint uses the line segment between the two points, creating a capsule-shaped distance field. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="line_sdf_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the line SDF constraint and its particle list.
+			</description>
+		</method>
+		<method name="line_sdf_set_position_a">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position_a" type="Vector3" />
+			<description>
+				Sets the first endpoint of the line SDF constraint.
+			</description>
+		</method>
+		<method name="line_sdf_set_position_b">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position_b" type="Vector3" />
+			<description>
+				Sets the second endpoint of the line SDF constraint.
+			</description>
+		</method>
+		<method name="line_sdf_set_infinite">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="infinite" type="bool" />
+			<description>
+				Sets whether the line extends infinitely. When [code]false[/code], the projection parameter is clamped to [code][0, 1][/code], making the constraint act as a capsule (line segment with rounded ends).
+			</description>
+		</method>
+		<method name="line_sdf_set_rest_distance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="rest_distance" type="float" />
+			<description>
+				Sets the target distance from the line.
+			</description>
+		</method>
+		<method name="line_sdf_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the line SDF constraint.
+			</description>
+		</method>
+		<method name="line_sdf_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this line SDF constraint.
+			</description>
+		</method>
+		<method name="line_sdf_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this line SDF constraint.
+			</description>
+		</method>
+
+		<!-- Box SDF -->
+
+		<method name="box_sdf_create">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="basis" type="Basis" />
+			<param index="2" name="size" type="Vector3" />
+			<param index="3" name="rest_distance" type="float" />
+			<param index="4" name="compliance" type="float" />
+			<description>
+				Creates an oriented box SDF constraint at [param position] with orientation [param basis] and full extents [param size]. Particles will be kept at [param rest_distance] from the box surface. The signed distance is negative inside the box and positive outside. Returns the constraint's ID.
+			</description>
+		</method>
+		<method name="box_sdf_free">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Frees the box SDF constraint and its particle list.
+			</description>
+		</method>
+		<method name="box_sdf_set_position">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<description>
+				Sets the center position of the box SDF constraint.
+			</description>
+		</method>
+		<method name="box_sdf_set_basis">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="basis" type="Basis" />
+			<description>
+				Sets the orientation basis of the box SDF constraint.
+			</description>
+		</method>
+		<method name="box_sdf_set_size">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="size" type="Vector3" />
+			<description>
+				Sets the full extents (width, height, depth) of the box SDF constraint.
+			</description>
+		</method>
+		<method name="box_sdf_set_rest_distance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="rest_distance" type="float" />
+			<description>
+				Sets the target signed distance from the box surface.
+			</description>
+		</method>
+		<method name="box_sdf_set_compliance">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="compliance" type="float" />
+			<description>
+				Sets the compliance of the box SDF constraint.
+			</description>
+		</method>
+		<method name="box_sdf_add_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Adds a particle to this box SDF constraint.
+			</description>
+		</method>
+		<method name="box_sdf_remove_particle">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="particle_id" type="int" />
+			<description>
+				Removes a particle from this box SDF constraint.
+			</description>
+		</method>
+
+		<!-- Solver -->
+
+		<method name="set_substeps">
+			<return type="void" />
+			<param index="0" name="substeps" type="int" />
+			<description>
+				Sets the number of XPBD substeps per [method iteration] call. More substeps increase accuracy and stiffness at the cost of performance. Defaults to [code]8[/code]. Minimum is [code]1[/code].
+			</description>
+		</method>
+		<method name="get_substeps" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the current number of substeps.
+			</description>
+		</method>
+		<method name="iteration">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances the simulation by [param delta] seconds. This performs prediction, XPBD constraint projection (distance, tetrahedral, SDF), collision response, and velocity update for all active particles across the configured number of substeps. Call this once per physics frame.
+			</description>
+		</method>
+		<method name="warmup">
+			<return type="void" />
+			<param index="0" name="iterations" type="int" />
+			<param index="1" name="particle_ids" type="PackedInt32Array" />
+			<description>
+				Runs [param iterations] simulation steps on a subset of particles to let constraints settle before the main simulation begins. Only the particles listed in [param particle_ids] are allowed to move; all other dynamic particles are temporarily frozen (set to infinite mass). Constraints and colliders not involving any warmup particle are temporarily deactivated. Useful for initializing soft bodies into a rest state.
+			</description>
+		</method>
+	</methods>
+</class>
