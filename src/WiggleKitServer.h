@@ -39,34 +39,49 @@ class WiggleKitServer : public Object
     struct PlaneCollider
     {
         Vector3 position;
+        Vector3 previous_position;
+        Vector3 velocity;
+        Vector3 angular_velocity;
         Vector3 normal;
+        Vector3 previous_normal;
         float bounciness = 0.0f;
         float friction = 0.0f;
         LocalVector<uint32_t> particles;
         bool active = false;
+        bool position_dirty = false;
+        bool normal_dirty = false;
     };
 
     struct SphereCollider
     {
         Vector3 position;
+        Vector3 previous_position;
+        Vector3 velocity;
         float radius = 1.0f;
         float bounciness = 0.0f;
         float friction = 0.0f;
         LocalVector<uint32_t> particles;
         bool inside = false;
         bool active = false;
+        bool position_dirty = false;
     };
 
     struct BoxCollider
     {
         Vector3 position;
+        Vector3 previous_position;
+        Vector3 velocity;
+        Vector3 angular_velocity;
         Basis basis;
+        Basis previous_basis;
         Vector3 size; // Full width, height, depth
         float bounciness = 0.0f;
         float friction = 0.0f;
         LocalVector<uint32_t> particles;
         bool inside = false;
         bool active = false;
+        bool position_dirty = false;
+        bool basis_dirty = false;
     };
 
     struct TetrahedralConstraint

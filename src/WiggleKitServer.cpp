@@ -587,11 +587,17 @@ uint32_t WiggleKitServer::plane_collider_create( const Vector3 &p_position, cons
 
     PlaneCollider &pc = plane_colliders[index];
     pc.position = p_position;
+    pc.previous_position = p_position;
+    pc.velocity = Vector3();
+    pc.angular_velocity = Vector3();
     pc.normal = p_normal.normalized();
+    pc.previous_normal = pc.normal;
     pc.bounciness = p_bounciness;
     pc.friction = p_friction;
     pc.particles.clear();
     pc.active = true;
+    pc.position_dirty = false;
+    pc.normal_dirty = false;
 
     return index;
 }
@@ -610,14 +616,18 @@ void WiggleKitServer::plane_collider_set_position( uint32_t p_id, const Vector3 
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, plane_colliders.size() );
     ERR_FAIL_COND( !plane_colliders[p_id].active );
+    plane_colliders[p_id].previous_position = plane_colliders[p_id].position;
     plane_colliders[p_id].position = p_position;
+    plane_colliders[p_id].position_dirty = true;
 }
 
 void WiggleKitServer::plane_collider_set_normal( uint32_t p_id, const Vector3 &p_normal )
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, plane_colliders.size() );
     ERR_FAIL_COND( !plane_colliders[p_id].active );
+    plane_colliders[p_id].previous_normal = plane_colliders[p_id].normal;
     plane_colliders[p_id].normal = p_normal.normalized();
+    plane_colliders[p_id].normal_dirty = true;
 }
 
 void WiggleKitServer::plane_collider_add_particle( uint32_t p_id, uint32_t p_particle_id )
@@ -663,12 +673,15 @@ uint32_t WiggleKitServer::sphere_collider_create( const Vector3 &p_position, flo
 
     SphereCollider &sc = sphere_colliders[index];
     sc.position = p_position;
+    sc.previous_position = p_position;
+    sc.velocity = Vector3();
     sc.radius = p_radius;
     sc.bounciness = p_bounciness;
     sc.friction = p_friction;
     sc.particles.clear();
     sc.inside = p_inside;
     sc.active = true;
+    sc.position_dirty = false;
 
     return index;
 }
@@ -687,7 +700,9 @@ void WiggleKitServer::sphere_collider_set_position( uint32_t p_id, const Vector3
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, sphere_colliders.size() );
     ERR_FAIL_COND( !sphere_colliders[p_id].active );
+    sphere_colliders[p_id].previous_position = sphere_colliders[p_id].position;
     sphere_colliders[p_id].position = p_position;
+    sphere_colliders[p_id].position_dirty = true;
 }
 
 void WiggleKitServer::sphere_collider_set_radius( uint32_t p_id, float p_radius )
@@ -740,13 +755,19 @@ uint32_t WiggleKitServer::box_collider_create( const Vector3 &p_position, const 
 
     BoxCollider &bc = box_colliders[index];
     bc.position = p_position;
+    bc.previous_position = p_position;
+    bc.velocity = Vector3();
+    bc.angular_velocity = Vector3();
     bc.basis = p_basis;
+    bc.previous_basis = p_basis;
     bc.size = p_size;
     bc.bounciness = p_bounciness;
     bc.friction = p_friction;
     bc.particles.clear();
     bc.inside = p_inside;
     bc.active = true;
+    bc.position_dirty = false;
+    bc.basis_dirty = false;
 
     return index;
 }
@@ -765,14 +786,18 @@ void WiggleKitServer::box_collider_set_position( uint32_t p_id, const Vector3 &p
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
     ERR_FAIL_COND( !box_colliders[p_id].active );
+    box_colliders[p_id].previous_position = box_colliders[p_id].position;
     box_colliders[p_id].position = p_position;
+    box_colliders[p_id].position_dirty = true;
 }
 
 void WiggleKitServer::box_collider_set_basis( uint32_t p_id, const Basis &p_basis )
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
     ERR_FAIL_COND( !box_colliders[p_id].active );
+    box_colliders[p_id].previous_basis = box_colliders[p_id].basis;
     box_colliders[p_id].basis = p_basis;
+    box_colliders[p_id].basis_dirty = true;
 }
 
 void WiggleKitServer::box_collider_set_size( uint32_t p_id, const Vector3 &p_size )
@@ -1213,9 +1238,150 @@ void WiggleKitServer::iteration( float p_delta )
     float sub_delta = p_delta / (float)substeps;
     float inv_sub_delta = 1.0f / sub_delta;
     float inv_sub_delta_sq = inv_sub_delta * inv_sub_delta;
+    float inv_delta = 1.0f / p_delta;
+
+    // Compute collider velocities from position/orientation changes (only when dirty)
+    for ( PlaneCollider &pc : plane_colliders )
+    {
+        if ( !pc.active )
+        {
+            continue;
+        }
+        if ( pc.position_dirty )
+        {
+            pc.velocity = ( pc.position - pc.previous_position ) * inv_delta;
+            pc.position_dirty = false;
+        }
+        if ( pc.normal_dirty )
+        {
+            pc.angular_velocity = Vector3();
+            if ( pc.normal != pc.previous_normal )
+            {
+                // Compute angular velocity from normal change: ω = (old_normal × new_normal) *
+                // angle / delta
+                Vector3 cross = pc.previous_normal.cross( pc.normal );
+                float sin_angle = cross.length();
+                if ( sin_angle > 0.0001f )
+                {
+                    float cos_angle = pc.previous_normal.dot( pc.normal );
+                    float angle = std::atan2( sin_angle, cos_angle );
+                    pc.angular_velocity = ( cross / sin_angle ) * angle * inv_delta;
+                }
+            }
+            pc.normal_dirty = false;
+        }
+    }
+
+    for ( SphereCollider &sc : sphere_colliders )
+    {
+        if ( !sc.active )
+        {
+            continue;
+        }
+        if ( sc.position_dirty )
+        {
+            sc.velocity = ( sc.position - sc.previous_position ) * inv_delta;
+            sc.position_dirty = false;
+        }
+    }
+
+    for ( BoxCollider &bc : box_colliders )
+    {
+        if ( !bc.active )
+        {
+            continue;
+        }
+        if ( bc.position_dirty )
+        {
+            bc.velocity = ( bc.position - bc.previous_position ) * inv_delta;
+            bc.position_dirty = false;
+        }
+        if ( bc.basis_dirty )
+        {
+            bc.angular_velocity = Vector3();
+            if ( bc.basis != bc.previous_basis )
+            {
+                // Compute angular velocity from basis change: R = basis * previous_basis^-1
+                // Extract axis-angle from R to get ω = axis * angle / delta
+                Basis R = bc.basis * bc.previous_basis.inverse();
+                // Extract axis-angle from rotation matrix R
+                // angle = acos((trace(R) - 1) / 2)
+                // axis = (1 / (2*sin(angle))) * [R32-R23, R13-R31, R21-R12]
+                float trace = R[0][0] + R[1][1] + R[2][2];
+                float cos_angle = ( trace - 1.0f ) * 0.5f;
+                if ( cos_angle < -1.0f )
+                {
+                    cos_angle = -1.0f;
+                }
+                if ( cos_angle > 1.0f )
+                {
+                    cos_angle = 1.0f;
+                }
+                float angle = std::acos( cos_angle );
+                if ( angle > 0.0001f )
+                {
+                    float s = 1.0f / ( 2.0f * std::sin( angle ) );
+                    Vector3 axis( ( R[1][2] - R[2][1] ) * s, ( R[2][0] - R[0][2] ) * s,
+                                  ( R[0][1] - R[1][0] ) * s );
+                    bc.angular_velocity = axis * angle * inv_delta;
+                }
+            }
+            bc.basis_dirty = false;
+        }
+    }
 
     for ( uint32_t step = 0; step < substeps; step++ )
     {
+        // Interpolate collider positions/orientations for this substep
+        float substep_t = (float)( step + 1 ) / (float)substeps;
+
+        for ( PlaneCollider &pc : plane_colliders )
+        {
+            if ( pc.active )
+            {
+                pc.position = pc.previous_position + pc.velocity * p_delta * substep_t;
+                pc.normal = ( pc.previous_normal + pc.angular_velocity.cross( pc.previous_normal ) *
+                                                       p_delta * substep_t )
+                                .normalized();
+            }
+        }
+        for ( SphereCollider &sc : sphere_colliders )
+        {
+            if ( sc.active )
+            {
+                sc.position = sc.previous_position + sc.velocity * p_delta * substep_t;
+            }
+        }
+        for ( BoxCollider &bc : box_colliders )
+        {
+            if ( bc.active )
+            {
+                bc.position = bc.previous_position + bc.velocity * p_delta * substep_t;
+                // Interpolate basis using angular velocity (small-angle approximation)
+                // For substep interpolation, apply ω * t as a rotation
+                Vector3 omega_t = bc.angular_velocity * p_delta * substep_t;
+                float angle = omega_t.length();
+                if ( angle > 0.0001f )
+                {
+                    Vector3 axis = omega_t / angle;
+                    // Rodrigues' rotation applied to each basis column
+                    float c = std::cos( angle );
+                    float s = std::sin( angle );
+                    Basis rot;
+                    rot[0] = bc.previous_basis[0] * c + axis.cross( bc.previous_basis[0] ) * s +
+                             axis * axis.dot( bc.previous_basis[0] ) * ( 1.0f - c );
+                    rot[1] = bc.previous_basis[1] * c + axis.cross( bc.previous_basis[1] ) * s +
+                             axis * axis.dot( bc.previous_basis[1] ) * ( 1.0f - c );
+                    rot[2] = bc.previous_basis[2] * c + axis.cross( bc.previous_basis[2] ) * s +
+                             axis * axis.dot( bc.previous_basis[2] ) * ( 1.0f - c );
+                    bc.basis = rot;
+                }
+                else
+                {
+                    bc.basis = bc.previous_basis;
+                }
+            }
+        }
         // 1. Predict positions
         for ( uint32_t i = 0; i < particles.size(); i++ )
         {
@@ -1554,7 +1720,10 @@ void WiggleKitServer::iteration( float p_delta )
                 // Friction
                 if ( pc.friction > 0.0f )
                 {
-                    Vector3 relative_move = p.position - p.previous_position;
+                    Vector3 r = p.position - pc.position;
+                    Vector3 v_surface = pc.velocity + pc.angular_velocity.cross( r );
+                    Vector3 surface_move = v_surface * sub_delta;
+                    Vector3 relative_move = ( p.position - p.previous_position ) - surface_move;
                     Vector3 normal_component = relative_move.dot( pc.normal ) * pc.normal;
                     Vector3 tangent_component = relative_move - normal_component;
                     float lateral_dist = tangent_component.length();
@@ -1717,7 +1886,10 @@ void WiggleKitServer::iteration( float p_delta )
                 // Friction
                 if ( bc.friction > 0.0f )
                 {
-                    Vector3 relative_move = p.position - p.previous_position;
+                    Vector3 r = p.position - bc.position;
+                    Vector3 v_surface = bc.velocity + bc.angular_velocity.cross( r );
+                    Vector3 surface_move = v_surface * sub_delta;
+                    Vector3 relative_move = ( p.position - p.previous_position ) - surface_move;
                     Vector3 normal_component = relative_move.dot( normal ) * normal;
                     Vector3 tangent_component = relative_move - normal_component;
                     float lateral_dist = tangent_component.length();
@@ -1743,7 +1915,7 @@ void WiggleKitServer::iteration( float p_delta )
             p.velocity = ( p.position - p.previous_position ) * inv_sub_delta;
         }
 
-        // Velocity-based bounciness (post-solver), iterating collider particle lists
+        // Velocity-based bounciness (post-solver), using relative velocity
         for ( PlaneCollider &pc : plane_colliders )
         {
             if ( !pc.active )
@@ -1760,10 +1932,12 @@ void WiggleKitServer::iteration( float p_delta )
                 float dist = pc.normal.dot( p.position - pc.position );
                 if ( dist < 0.01f )
                 {
-                    float v_dot_n = p.velocity.dot( pc.normal );
-                    if ( v_dot_n < 0.0f )
+                    Vector3 r = p.position - pc.position;
+                    Vector3 v_surface = pc.velocity + pc.angular_velocity.cross( r );
+                    float v_rel_n = ( p.velocity - v_surface ).dot( pc.normal );
+                    if ( v_rel_n < 0.0f )
                     {
-                        p.velocity -= ( 1.0f + pc.bounciness ) * v_dot_n * pc.normal;
+                        p.velocity -= ( 1.0f + pc.bounciness ) * v_rel_n * pc.normal;
                     }
                 }
             }
@@ -1806,10 +1980,10 @@ void WiggleKitServer::iteration( float p_delta )
 
                 if ( near_surface )
                 {
-                    float v_dot_n = p.velocity.dot( normal );
-                    if ( v_dot_n < 0.0f )
+                    float v_rel_n = ( p.velocity - sc.velocity ).dot( normal );
+                    if ( v_rel_n < 0.0f )
                     {
-                        p.velocity -= ( 1.0f + sc.bounciness ) * v_dot_n * normal;
+                        p.velocity -= ( 1.0f + sc.bounciness ) * v_rel_n * normal;
                     }
                 }
             }
@@ -1878,10 +2052,12 @@ void WiggleKitServer::iteration( float p_delta )
                 if ( near_surface )
                 {
                     Vector3 normal = bc.basis.xform( local_normal );
-                    float v_dot_n = p.velocity.dot( normal );
-                    if ( v_dot_n < 0.0f )
+                    Vector3 r = p.position - bc.position;
+                    Vector3 v_surface = bc.velocity + bc.angular_velocity.cross( r );
+                    float v_rel_n = ( p.velocity - v_surface ).dot( normal );
+                    if ( v_rel_n < 0.0f )
                     {
-                        p.velocity -= ( 1.0f + bc.bounciness ) * v_dot_n * normal;
+                        p.velocity -= ( 1.0f + bc.bounciness ) * v_rel_n * normal;
                     }
                 }
             }
