@@ -7,7 +7,7 @@
 		WiggleKitServer provides an XPBD solver operating on particles, constraints, colliders, and signed distance field (SDF) constraints. Particles are the fundamental simulation elements with position, mass, gravity, damping, and velocity. Constraints (distance, tetrahedral, SDF) are solved during the XPBD projection phase with configurable compliance for soft or hard behavior. Colliders (plane, sphere, box) provide velocity-based collision response with bounciness and friction. SDF constraints (plane, sphere, line, box) keep particles at a signed distance from geometric primitives using XPBD projection.
 		All objects are referenced by integer IDs returned from their respective [code]create[/code] methods. Call [method iteration] to advance the simulation (each _physics_process is a good place, but you could totally run the iteration in a thread and simulate a few seconds for example).
 
-		There is one global instance that can be accessed with WiggleKit.[method function_name]. You still have to run the [method iteration] to advance the simulation, but you can use the WiggleKit.gd as an autoload.
+		There is one global instance that can be accessed with WiggleKit.[method function_name]. You still have to run the [method iteration] to advance the simulation, but you can use the addons/WiggleKit/scripts/WiggleKitMaintainer.gd as an autoload.
 		You can create additional WiggleKitServer instances if that is useful for your project.
 	</description>
 	<methods>

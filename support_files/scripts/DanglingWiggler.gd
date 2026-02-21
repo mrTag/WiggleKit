@@ -27,6 +27,9 @@ const COMPLIANCE_FACTOR : float = 0.00001
 			if p_id != -1: WiggleKit.particle_set_gravity(p_id, value)
 		gravity = value
 
+@export var Colliders: Array[WiggleShapeBase] = []
+@export var ShapeDistanceConstraints: Array[WiggleShapeBase] = []
+
 var _position_particle: int = -1
 var _base_particles: Array[int] = []
 
@@ -78,6 +81,12 @@ func _enter_tree() -> void:
 	# 3. Base diagonals
 	_distance_constraints.append(WiggleKit.distance_constraint_create(_base_particles[0], _base_particles[2], 0))
 	_distance_constraints.append(WiggleKit.distance_constraint_create(_base_particles[1], _base_particles[3], 0))
+
+	for p_id in _base_particles:
+		for collider in Colliders:
+			if collider: collider.add_particle_to_collider(p_id)
+		for sdf in ShapeDistanceConstraints:
+			if sdf: sdf.add_particle_to_sdf_constraint(p_id)
 
 func _exit_tree() -> void:
 	if Engine.is_editor_hint():

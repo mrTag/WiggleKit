@@ -1,15 +1,15 @@
 @tool
 extends EditorPlugin
 
+var wiggle_gizmos := WiggleGizmos.new()
+
 
 func _enable_plugin() -> void:
-	# Add autoloads here.
-	pass
+	add_node_3d_gizmo_plugin(wiggle_gizmos)
 
 
 func _disable_plugin() -> void:
-	# Remove autoloads here.
-	pass
+	remove_node_3d_gizmo_plugin(wiggle_gizmos)
 
 
 func _enter_tree() -> void:

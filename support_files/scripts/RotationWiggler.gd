@@ -24,6 +24,9 @@ const COMPLIANCE_FACTOR : float = 0.00001
 		if _tip_particle != -1: WiggleKit.particle_set_gravity(_tip_particle, value)
 		gravity = value
 
+@export var Colliders: Array[WiggleShapeBase] = []
+@export var ShapeDistanceConstraints: Array[WiggleShapeBase] = []
+
 var _center_particle: int = -1
 var _base_particles: Array[int] = []
 var _tip_particle: int = -1
@@ -66,6 +69,11 @@ func _enter_tree() -> void:
 		_base_particles[0], _base_particles[1], _base_particles[2], _tip_particle, slackness * COMPLIANCE_FACTOR
 	)
 	_dist_constraint = WiggleKit.distance_constraint_create(_center_particle, _tip_particle, 0.001)
+	
+	for collider in Colliders:
+		if collider: collider.add_particle_to_collider(_tip_particle)
+	for sdf in ShapeDistanceConstraints:
+		if sdf: sdf.add_particle_to_sdf_constraint(_tip_particle)
 
 func _exit_tree() -> void:
 	if Engine.is_editor_hint():
