@@ -17,6 +17,12 @@ const COMPLIANCE_FACTOR : float = 0.00001
 			WiggleKit.particle_set_damping(_tip_particle, value)
 		damping = value
 
+@export_range(0, 1, 0.05) var ParentMovementInfluence : float = 0.9
+## Low-pass factor for the parent-motion estimate (1 = no smoothing).
+@export_range(0.01, 1, 0.01) var MovementSmoothing : float = 0.4
+## Clamps the per-tick parent displacement in metres to reject network snaps (0 = off).
+@export var MaxMovementPerTick : float = 0.5
+
 @export var width: float = 0.5
 @export var height: float = 1.0
 
@@ -26,7 +32,6 @@ const COMPLIANCE_FACTOR : float = 0.00001
 			WiggleKit.distance_constraint_set_compliance(dist_constraint, value)
 		compliance = value
 
-@export var wiggle_intensity : float = 1
 
 @export var gravity : Vector3 = Vector3(0,-10,0):
 	set(value): 
@@ -43,25 +48,33 @@ var _tip_particle : int = -1
 
 var _distance_constraints: Array[int] = []
 
+var _parent_node3D : Node3D
+var _parent_motion := WiggleParentMotion.new()
+
 func _enter_tree() -> void:
 	if Engine.is_editor_hint():
 		return
-	
-	# position particles will be kept statically at our global_position (base of hinge)
-	_position_particle1 = WiggleKit.particle_create(to_global(Vector3.LEFT * width), 0, Vector3.ZERO, 0)
-	_position_particle2 = WiggleKit.particle_create(to_global(Vector3.RIGHT * width), 0, Vector3.ZERO, 0)
-	
+
+	add_to_group("wigglers")
+	_parent_node3D = get_parent_node_3d()
+
+	# position particles will be kept statically at our position (base of hinge, parent-local)
+	_position_particle1 = WiggleKit.particle_create(transform * (Vector3.LEFT * width), 999, Vector3.ZERO, 0)
+	_position_particle2 = WiggleKit.particle_create(transform * (Vector3.RIGHT * width), 999, Vector3.ZERO, 0)
+
 	# tip particle
-	_tip_particle = WiggleKit.particle_create(to_global(Vector3.DOWN * height), mass, gravity, damping)
-	
+	_tip_particle = WiggleKit.particle_create(transform * (Vector3.DOWN * height), mass, gravity, damping)
+
 	# distance constraints from position particles to _tip particle
 	_distance_constraints.append(WiggleKit.distance_constraint_create(_position_particle1, _tip_particle, 0))
 	_distance_constraints.append(WiggleKit.distance_constraint_create(_position_particle2, _tip_particle, 0))
-	
+
 	for collider in Colliders:
 		if collider: collider.add_particle_to_collider(_tip_particle)
 	for sdf in ShapeDistanceConstraints:
 		if sdf: sdf.add_particle_to_sdf_constraint(_tip_particle)
+
+	_parent_motion.reset(_parent_node3D)
 
 func _exit_tree() -> void:
 	if Engine.is_editor_hint():
@@ -79,29 +92,39 @@ func _exit_tree() -> void:
 		_position_particle2 = -1
 		_tip_particle = -1
 
-func _physics_process(delta: float) -> void:
+## Drops parent-motion history; call after a hard parent teleport/snap.
+func reset_motion() -> void:
+	if _parent_node3D:
+		_parent_motion.reset(_parent_node3D)
+
+func _physics_process(_delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
-	
+
 	if _tip_particle == -1:
 		return
-	
-	var tip_pos := WiggleKit.particle_get_position(_tip_particle)
-	
-	# Y axis points from global_position to the tip
-	var y_axis := (global_position - tip_pos).normalized()
-	# a bit of lerping, so that the global changes are not completely overwritten
-	y_axis = global_basis.y.slerp(y_axis, 1 - exp(-wiggle_intensity * delta))
-	var x_axis := global_basis.x
-	var z_axis := x_axis.cross(y_axis).normalized()
-	global_basis = Basis(x_axis, y_axis, z_axis).orthonormalized()
-	
+
 	# Update the static position particles
-	WiggleKit.particle_set_position(_position_particle1, to_global(Vector3.LEFT * width))
-	WiggleKit.particle_set_position(_position_particle2, to_global(Vector3.RIGHT * width))
-	
+	WiggleKit.particle_set_position(_position_particle1, transform * (Vector3.LEFT * width))
+	WiggleKit.particle_set_position(_position_particle2, transform * (Vector3.RIGHT * width))
+
+	var to_local_rotation := _parent_node3D.global_basis.inverse()
+	var parent_accel := _parent_motion.update(_parent_node3D, to_local_rotation, MovementSmoothing, MaxMovementPerTick)
+
+	WiggleKit.particle_set_gravity(_tip_particle, to_local_rotation * gravity)
+	var tip_pos := WiggleKit.particle_get_position(_tip_particle)
+	if ParentMovementInfluence > 0:
+		tip_pos -= parent_accel * ParentMovementInfluence
+
+	# Y axis points from our (parent-local) position to the tip
+	var y_axis := (position - tip_pos).normalized()
+	var x_axis := basis.x
+	var z_axis := x_axis.cross(y_axis).normalized()
+	basis = Basis(x_axis, y_axis, z_axis).orthonormalized()
+
 	# project the tip_pos into the rotation plane (otherwise there might be huge velocities)
-	var local_tip_pos := to_local(tip_pos)
+	var to_local_transform := transform.affine_inverse()
+	var local_tip_pos := to_local_transform * tip_pos
 	local_tip_pos.x = 0
-	tip_pos = to_global(local_tip_pos)
+	tip_pos = transform * local_tip_pos
 	WiggleKit.particle_set_position(_tip_particle, tip_pos)

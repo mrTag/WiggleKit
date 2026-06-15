@@ -17,9 +17,16 @@ const COMPLIANCE_FACTOR : float = 0.00001
 			if p_id != -1: WiggleKit.particle_set_damping(p_id, value)
 		base_damping = value
 
+@export_range(0, 1, 0.05) var ParentMovementInfluence : float = 0.9
+## Low-pass factor for the parent-motion estimate (1 = no smoothing).
+@export_range(0.01, 1, 0.01) var MovementSmoothing : float = 0.4
+## Clamps the per-tick parent displacement in metres to reject network snaps (0 = off).
+@export var MaxMovementPerTick : float = 0.5
+
 @export var height: float = 1.0
 @export var width: float = 0.5
 @export var depth: float = 0.5
+@export var no_yaw_rotation : bool = false
 
 @export var gravity : Vector3 = Vector3(0,-10,0):
 	set(value): 
@@ -37,13 +44,20 @@ var _tetra_constraint_1: int = -1
 var _tetra_constraint_2: int = -1
 var _distance_constraints: Array[int] = []
 
+var _parent_motion := WiggleParentMotion.new()
+var _parent_node3D : Node3D
+
 func _enter_tree() -> void:
 	if Engine.is_editor_hint():
 		return
-	
-	# position particle will be kept statically at our global_position (tip of pyramid)
-	_position_particle = WiggleKit.particle_create(global_position, 999, Vector3.ZERO, 0)
-	
+
+	add_to_group("wigglers")
+	_parent_node3D = get_parent_node_3d()
+	_parent_motion.reset(_parent_node3D)
+
+	# position particle will be kept statically at our position (tip of pyramid, parent-local)
+	_position_particle = WiggleKit.particle_create(position, 999, Vector3.ZERO, 0)
+
 	# 4 base particles forming a rectangle in XZ plane, shifted down by 'height'
 	# Local coordinates relative to this node
 	var base_offsets : Array[Vector3] = [
@@ -52,9 +66,9 @@ func _enter_tree() -> void:
 		Vector3(width/2, -height, depth/2),
 		Vector3(-width/2, -height, depth/2)
 	]
-	
+
 	for offset in base_offsets:
-		var p_id = WiggleKit.particle_create(to_global(offset), base_mass/4.0, gravity, base_damping)
+		var p_id = WiggleKit.particle_create(transform * offset, base_mass/4.0, gravity, base_damping)
 		_base_particles.append(p_id)
 		
 	# 2 tetrahedral constraints forming the pyramid
@@ -103,28 +117,44 @@ func _exit_tree() -> void:
 			if p_id != -1: WiggleKit.particle_free(p_id)
 		_base_particles.clear()
 
+## Drops parent-motion history; call after a hard parent teleport/snap.
+func reset_motion() -> void:
+	if _parent_node3D:
+		_parent_motion.reset(_parent_node3D)
+
 func _physics_process(_delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
-	
+
 	if _base_particles.size() < 4:
 		return
-		
-	var p_pos := global_position
+
+	var to_local_rotation := _parent_node3D.global_basis.inverse()
+	var parent_accel := _parent_motion.update(_parent_node3D, to_local_rotation, MovementSmoothing, MaxMovementPerTick)
+
+	for p_id in _base_particles:
+		WiggleKit.particle_set_gravity(p_id, to_local_rotation * gravity)
+		if ParentMovementInfluence > 0:
+			var particle_pos := WiggleKit.particle_get_position(p_id)
+			WiggleKit.particle_set_position(p_id, particle_pos - parent_accel * ParentMovementInfluence)
+
+	var p_pos := position
 	var b0 := WiggleKit.particle_get_position(_base_particles[0])
 	var b1 := WiggleKit.particle_get_position(_base_particles[1])
 	var b2 := WiggleKit.particle_get_position(_base_particles[2])
 	var b3 := WiggleKit.particle_get_position(_base_particles[3])
-	
+
 	var base_center := (b0 + b1 + b2 + b3) / 4.0
-	
+
 	# Y axis points from base center to the fixed tip (upwards in pyramid local space)
 	var y_axis := (p_pos - base_center).normalized()
-	
+
 	# To define yaw, we use the direction between base particles
 	# locally base0 to base1 is along X
 	var to_side := (b1 - b0).normalized()
-	
+	if no_yaw_rotation:
+		to_side = Vector3.RIGHT
+
 	if y_axis.is_finite() and y_axis.length_squared() > 0.0001:
 		# X axis is perpendicular to Y and our side vector
 		var x_axis := y_axis.cross(to_side).cross(y_axis).normalized()
@@ -132,10 +162,11 @@ func _physics_process(_delta: float) -> void:
 			# Fallback if side vector is parallel to Y
 			x_axis = Vector3.RIGHT if abs(y_axis.x) < 0.9 else Vector3.FORWARD
 			x_axis = x_axis.cross(y_axis).normalized()
-			
+
 		var z_axis := x_axis.cross(y_axis).normalized()
-		
-		global_basis = Basis(x_axis, y_axis, z_axis).orthonormalized()
-		
+
+		basis = Basis(x_axis, y_axis, z_axis).orthonormalized()
+
 	# Update the static position particle
-	WiggleKit.particle_set_position(_position_particle, global_position)
+	WiggleKit.particle_set_position(_position_particle, position)
+	

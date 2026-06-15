@@ -13,8 +13,12 @@ const COMPLIANCE_FACTOR : float = 0.00001
 @export var link_mass: float = 0.1:
 	set(value):
 		link_mass = value
-		for p_id in _link_particles:
-			if p_id != -1: WiggleKit.particle_set_mass(p_id, value)
+		var last_idx := link_count - 1
+		for i in _link_particles.size():
+			var p_id : int = _link_particles[i]
+			if p_id == -1: continue
+			if end_attachment and i == last_idx: continue
+			WiggleKit.particle_set_mass(p_id, value)
 
 @export var link_damping: float = 0.5:
 	set(value):
@@ -23,6 +27,12 @@ const COMPLIANCE_FACTOR : float = 0.00001
 			if p_id != -1: WiggleKit.particle_set_damping(p_id, value)
 		for p_id in _aux_particles:
 			if p_id != -1: WiggleKit.particle_set_damping(p_id, value)
+
+@export_range(0, 1, 0.05) var ParentMovementInfluence : float = 0.9
+## Low-pass factor for the parent-motion estimate (1 = no smoothing).
+@export_range(0.01, 1, 0.01) var MovementSmoothing : float = 0.4
+## Clamps the per-tick parent displacement in metres to reject network snaps (0 = off).
+@export var MaxMovementPerTick : float = 0.5
 
 @export var gravity: Vector3 = Vector3(0, -10, 0):
 	set(value):
@@ -52,23 +62,36 @@ var _aux_particles: Array[int] = []
 var _distance_constraints: Array[int] = []
 var _tetrahedral_constraints: Array[int] = []
 
+var _parent_motion := WiggleParentMotion.new()
+var _parent_node3D : Node3D
 
+var init : bool = false
 func _enter_tree() -> void:
 	if Engine.is_editor_hint():
 		_setup_multimesh()
 		return
-	
+
+	add_to_group("wigglers")
+	_parent_node3D = get_parent_node_3d()
+
 	_setup_multimesh()
 	_create_particles()
 	_create_constraints()
 	_register_colliders()
+	_parent_motion.reset(_parent_node3D)
+
+	init = false
+	set_physics_process(false)
 	await get_tree().process_frame
 	if end_attachment:
-		WiggleKit.particle_set_position(_link_particles[link_count - 1], end_attachment.global_position)
+		WiggleKit.particle_set_position(_link_particles[link_count - 1], _parent_node3D.to_local(end_attachment.global_position))
 		var all_particles : Array
 		all_particles.append_array(_link_particles)
 		all_particles.append_array(_aux_particles)
 		WiggleKit.warmup(200, all_particles)
+
+	set_physics_process(true)
+	init = true
 
 
 func _exit_tree() -> void:
@@ -109,8 +132,8 @@ func _create_particles() -> void:
 	var half_width := link_width / 2.0
 	
 	# Create anchor (fixed) particle at origin
-	_anchor_particle = WiggleKit.particle_create(global_position, 0, Vector3.ZERO, 0)
-	
+	_anchor_particle = WiggleKit.particle_create(position, 0, Vector3.ZERO, 0)
+
 	# Create 3 auxiliary particles for anchor forming a triangle in XZ plane
 	var anchor_aux_offsets := [
 		Vector3(half_width, 0, 0),
@@ -118,26 +141,26 @@ func _create_particles() -> void:
 		Vector3(-half_width * 0.5, 0, -half_width * 0.866)
 	]
 	for offset in anchor_aux_offsets:
-		var p_id = WiggleKit.particle_create(to_global(offset), 0, Vector3.ZERO, 0)
+		var p_id = WiggleKit.particle_create(transform * offset, 0, Vector3.ZERO, 0)
 		_anchor_aux_particles.append(p_id)
-	
+
 	# Create chain link particles
 	for i in range(link_count):
 		var y_offset := -link_length * (i + 1)
-		var pos := to_global(Vector3(0, y_offset, 0))
+		var pos := transform * Vector3(0, y_offset, 0)
 		var mass := link_mass
 		if end_attachment and i == link_count - 1: mass = 0.0
 		var p_id = WiggleKit.particle_create(pos, mass, gravity, link_damping)
 		_link_particles.append(p_id)
-		
+
 		# Create 3 auxiliary particles per link (triangle)
-		var aux_offsets := [
+		var aux_offsets : Array[Vector3] = [
 			Vector3(half_width, y_offset, 0),
 			Vector3(-half_width * 0.5, y_offset, half_width * 0.866),
 			Vector3(-half_width * 0.5, y_offset, -half_width * 0.866)
 		]
 		for offset in aux_offsets:
-			var aux_pos := to_global(offset)
+			var aux_pos := transform * offset
 			var aux_id = WiggleKit.particle_create(aux_pos, link_mass * 0.1, gravity, link_damping)
 			_aux_particles.append(aux_id)
 
@@ -217,17 +240,24 @@ func _register_colliders() -> void:
 			if sdf: sdf.add_particle_to_sdf_constraint(p_id)
 
 
+## Drops parent-motion history; call after a hard parent teleport/snap.
+func reset_motion() -> void:
+	if _parent_node3D:
+		_parent_motion.reset(_parent_node3D)
+
 func _physics_process(_delta: float) -> void:
+	if not init:
+		return
 	if Engine.is_editor_hint():
 		_update_editor_preview()
 		return
-	
+
 	if _link_particles.size() < link_count:
 		return
-	
+
 	# Update anchor position to follow node
-	WiggleKit.particle_set_position(_anchor_particle, global_position)
-	
+	WiggleKit.particle_set_position(_anchor_particle, position)
+
 	# Update anchor auxiliary particles
 	var half_width := link_width / 2.0
 	var anchor_aux_offsets := [
@@ -236,13 +266,28 @@ func _physics_process(_delta: float) -> void:
 		Vector3(-half_width * 0.5, 0, -half_width * 0.866)
 	]
 	for i in range(3):
-		WiggleKit.particle_set_position(_anchor_aux_particles[i], to_global(anchor_aux_offsets[i]))
-	
+		WiggleKit.particle_set_position(_anchor_aux_particles[i], transform * anchor_aux_offsets[i])
+
 	# Update end attachment if set
 	if end_attachment and is_instance_valid(end_attachment):
 		var last_idx := link_count - 1
-		WiggleKit.particle_set_position(_link_particles[last_idx], end_attachment.global_position)
-	
+		WiggleKit.particle_set_position(_link_particles[last_idx], _parent_node3D.to_local(end_attachment.global_position))
+
+	var to_local_rotation := _parent_node3D.global_basis.inverse()
+	var parent_accel := _parent_motion.update(_parent_node3D, to_local_rotation, MovementSmoothing, MaxMovementPerTick)
+	var dynamic_link_count := _link_particles.size() if not end_attachment else _link_particles.size() - 1
+	for i in dynamic_link_count:
+		var p_id : int = _link_particles[i]
+		WiggleKit.particle_set_gravity(p_id, to_local_rotation * gravity)
+		if ParentMovementInfluence > 0:
+			var particle_pos := WiggleKit.particle_get_position(p_id)
+			WiggleKit.particle_set_position(p_id, particle_pos - parent_accel * ParentMovementInfluence)
+	for p_id in _aux_particles:
+		WiggleKit.particle_set_gravity(p_id, to_local_rotation * gravity)
+		if ParentMovementInfluence > 0:
+			var particle_pos := WiggleKit.particle_get_position(p_id)
+			WiggleKit.particle_set_position(p_id, particle_pos - parent_accel * ParentMovementInfluence)
+
 	# Update multimesh instances
 	_update_multimesh()
 
@@ -252,41 +297,42 @@ func _update_multimesh() -> void:
 		return
 	
 	var link_length := total_length / float(link_count)
-	
+	var to_local_transform := transform.affine_inverse()
+
 	for i in range(link_count):
-		var main_pos := WiggleKit.particle_get_position(_link_particles[i])
+		var main_pos := to_local_transform * WiggleKit.particle_get_position(_link_particles[i])
 		var aux_base := i * 3
-		var aux0 := WiggleKit.particle_get_position(_aux_particles[aux_base])
-		var aux1 := WiggleKit.particle_get_position(_aux_particles[aux_base + 1])
-		var aux2 := WiggleKit.particle_get_position(_aux_particles[aux_base + 2])
-		
+		var aux0 := to_local_transform * WiggleKit.particle_get_position(_aux_particles[aux_base])
+		var aux1 := to_local_transform * WiggleKit.particle_get_position(_aux_particles[aux_base + 1])
+		var aux2 := to_local_transform * WiggleKit.particle_get_position(_aux_particles[aux_base + 2])
+
 		# Get previous link position for direction
 		var prev_pos: Vector3
 		if i == 0:
-			prev_pos = WiggleKit.particle_get_position(_anchor_particle)
+			prev_pos = to_local_transform * WiggleKit.particle_get_position(_anchor_particle)
 		else:
-			prev_pos = WiggleKit.particle_get_position(_link_particles[i - 1])
-		
+			prev_pos = to_local_transform * WiggleKit.particle_get_position(_link_particles[i - 1])
+
 		# Calculate basis from particle positions
 		var y_axis := (prev_pos - main_pos).normalized()
 		var x_axis := (aux0 - main_pos).normalized()
-		
+
 		if y_axis.length_squared() < 0.0001:
 			y_axis = Vector3.UP
 		if x_axis.length_squared() < 0.0001:
 			x_axis = Vector3.RIGHT
-		
+
 		# Orthonormalize
 		x_axis = (x_axis - y_axis * x_axis.dot(y_axis)).normalized()
 		var z_axis := x_axis.cross(y_axis).normalized()
-		
+
 		var basis := Basis(x_axis, y_axis, z_axis).orthonormalized()
-		
+
 		# Position at midpoint between this and previous link
 		var mid_pos := (prev_pos + main_pos) / 2.0
-		
+
 		var xform := Transform3D(basis, mid_pos)
-		multimesh.set_instance_transform(i, global_transform.affine_inverse() * xform)
+		multimesh.set_instance_transform(i, xform)
 
 
 func _update_editor_preview() -> void:

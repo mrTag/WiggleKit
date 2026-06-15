@@ -20,11 +20,13 @@ class WiggleKitServer : public Object
     {
         Vector3 position;
         Vector3 previous_position;
+        Vector3 next_position;
         Vector3 velocity;
         float inv_mass = 1.0f;
         Vector3 gravity = Vector3( 0.0f, -9.81f, 0.0f );
         float damping = 0.0f;
         bool active = false;
+        bool position_dirty = false;
     };
 
     struct DistanceConstraint
@@ -40,12 +42,15 @@ class WiggleKitServer : public Object
     {
         Vector3 position;
         Vector3 previous_position;
+        Vector3 next_position;
         Vector3 velocity;
         Vector3 angular_velocity;
         Vector3 normal;
         Vector3 previous_normal;
+        Vector3 next_normal;
         float bounciness = 0.0f;
         float friction = 0.0f;
+        float velocity_factor = 1.0f;
         LocalVector<uint32_t> particles;
         bool active = false;
         bool position_dirty = false;
@@ -56,10 +61,12 @@ class WiggleKitServer : public Object
     {
         Vector3 position;
         Vector3 previous_position;
+        Vector3 next_position;
         Vector3 velocity;
         float radius = 1.0f;
         float bounciness = 0.0f;
         float friction = 0.0f;
+        float velocity_factor = 1.0f;
         LocalVector<uint32_t> particles;
         bool inside = false;
         bool active = false;
@@ -70,13 +77,16 @@ class WiggleKitServer : public Object
     {
         Vector3 position;
         Vector3 previous_position;
+        Vector3 next_position;
         Vector3 velocity;
         Vector3 angular_velocity;
         Basis basis;
         Basis previous_basis;
+        Basis next_basis;
         Vector3 size; // Full width, height, depth
         float bounciness = 0.0f;
         float friction = 0.0f;
+        float velocity_factor = 1.0f;
         LocalVector<uint32_t> particles;
         bool inside = false;
         bool active = false;
@@ -210,6 +220,7 @@ public:
     void plane_collider_free( uint32_t p_id );
     void plane_collider_set_position( uint32_t p_id, const Vector3 &p_position );
     void plane_collider_set_normal( uint32_t p_id, const Vector3 &p_normal );
+    void plane_collider_set_velocity_factor( uint32_t p_id, float p_factor );
     void plane_collider_add_particle( uint32_t p_id, uint32_t p_particle_id );
     void plane_collider_remove_particle( uint32_t p_id, uint32_t p_particle_id );
 
@@ -218,6 +229,7 @@ public:
     void sphere_collider_free( uint32_t p_id );
     void sphere_collider_set_position( uint32_t p_id, const Vector3 &p_position );
     void sphere_collider_set_radius( uint32_t p_id, float p_radius );
+    void sphere_collider_set_velocity_factor( uint32_t p_id, float p_factor );
     void sphere_collider_add_particle( uint32_t p_id, uint32_t p_particle_id );
     void sphere_collider_remove_particle( uint32_t p_id, uint32_t p_particle_id );
 
@@ -228,6 +240,7 @@ public:
     void box_collider_set_position( uint32_t p_id, const Vector3 &p_position );
     void box_collider_set_basis( uint32_t p_id, const Basis &p_basis );
     void box_collider_set_size( uint32_t p_id, const Vector3 &p_size );
+    void box_collider_set_velocity_factor( uint32_t p_id, float p_factor );
     void box_collider_add_particle( uint32_t p_id, uint32_t p_particle_id );
     void box_collider_remove_particle( uint32_t p_id, uint32_t p_particle_id );
 

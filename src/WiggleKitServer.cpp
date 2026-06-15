@@ -84,6 +84,8 @@ void WiggleKitServer::_bind_methods()
                           &WiggleKitServer::plane_collider_set_position );
     ClassDB::bind_method( D_METHOD( "plane_collider_set_normal", "id", "normal" ),
                           &WiggleKitServer::plane_collider_set_normal );
+    ClassDB::bind_method( D_METHOD( "plane_collider_set_velocity_factor", "id", "factor" ),
+                          &WiggleKitServer::plane_collider_set_velocity_factor );
     ClassDB::bind_method( D_METHOD( "plane_collider_add_particle", "id", "particle_id" ),
                           &WiggleKitServer::plane_collider_add_particle );
     ClassDB::bind_method( D_METHOD( "plane_collider_remove_particle", "id", "particle_id" ),
@@ -97,6 +99,8 @@ void WiggleKitServer::_bind_methods()
                           &WiggleKitServer::sphere_collider_set_position );
     ClassDB::bind_method( D_METHOD( "sphere_collider_set_radius", "id", "radius" ),
                           &WiggleKitServer::sphere_collider_set_radius );
+    ClassDB::bind_method( D_METHOD( "sphere_collider_set_velocity_factor", "id", "factor" ),
+                          &WiggleKitServer::sphere_collider_set_velocity_factor );
     ClassDB::bind_method( D_METHOD( "sphere_collider_add_particle", "id", "particle_id" ),
                           &WiggleKitServer::sphere_collider_add_particle );
     ClassDB::bind_method( D_METHOD( "sphere_collider_remove_particle", "id", "particle_id" ),
@@ -112,6 +116,8 @@ void WiggleKitServer::_bind_methods()
                           &WiggleKitServer::box_collider_set_basis );
     ClassDB::bind_method( D_METHOD( "box_collider_set_size", "id", "size" ),
                           &WiggleKitServer::box_collider_set_size );
+    ClassDB::bind_method( D_METHOD( "box_collider_set_velocity_factor", "id", "factor" ),
+                          &WiggleKitServer::box_collider_set_velocity_factor );
     ClassDB::bind_method( D_METHOD( "box_collider_add_particle", "id", "particle_id" ),
                           &WiggleKitServer::box_collider_add_particle );
     ClassDB::bind_method( D_METHOD( "box_collider_remove_particle", "id", "particle_id" ),
@@ -209,11 +215,13 @@ uint32_t WiggleKitServer::particle_create( const Vector3 &p_position, float p_ma
     Particle &p = particles[index];
     p.position = p_position;
     p.previous_position = p_position;
+    p.next_position = p_position;
     p.velocity = Vector3();
     p.inv_mass = p_mass > 0.00001f ? 1.0f / p_mass : 0.0f;
     p.gravity = p_gravity;
     p.damping = p_damping;
     p.active = true;
+    p.position_dirty = false;
 
     return index;
 }
@@ -370,8 +378,23 @@ void WiggleKitServer::particle_set_position( uint32_t p_id, const Vector3 &p_pos
     ERR_FAIL_UNSIGNED_INDEX( p_id, particles.size() );
     Particle &p = particles[p_id];
     ERR_FAIL_COND( !p.active );
-    p.position = p_position;
-    p.previous_position = p_position;
+
+    // Kinematic (mass-0) particles are interpolated across substeps so that
+    // dynamic particles attached to them (via distance constraints, etc.) see
+    // a smooth sub-delta-sized motion rather than a single-substep teleport
+    // spike. Dynamic particles still snap instantly — that path is only used
+    // for initialization and explicit teleports.
+    if ( p.inv_mass == 0.0f )
+    {
+        p.next_position = p_position;
+        p.position_dirty = true;
+    }
+    else
+    {
+        p.position = p_position;
+        p.previous_position = p_position;
+        p.next_position = p_position;
+    }
 }
 
 Vector3 WiggleKitServer::particle_get_position( uint32_t p_id ) const
@@ -588,10 +611,12 @@ uint32_t WiggleKitServer::plane_collider_create( const Vector3 &p_position, cons
     PlaneCollider &pc = plane_colliders[index];
     pc.position = p_position;
     pc.previous_position = p_position;
+    pc.next_position = p_position;
     pc.velocity = Vector3();
     pc.angular_velocity = Vector3();
     pc.normal = p_normal.normalized();
     pc.previous_normal = pc.normal;
+    pc.next_normal = pc.normal;
     pc.bounciness = p_bounciness;
     pc.friction = p_friction;
     pc.particles.clear();
@@ -616,8 +641,11 @@ void WiggleKitServer::plane_collider_set_position( uint32_t p_id, const Vector3 
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, plane_colliders.size() );
     ERR_FAIL_COND( !plane_colliders[p_id].active );
-    plane_colliders[p_id].previous_position = plane_colliders[p_id].position;
-    plane_colliders[p_id].position = p_position;
+    // Only the target is updated here. The iteration() call is responsible for
+    // advancing previous_position -> position -> next_position exactly once per
+    // frame, so that multiple set_position() calls between iterations just
+    // overwrite the target and zero calls leave the collider at rest.
+    plane_colliders[p_id].next_position = p_position;
     plane_colliders[p_id].position_dirty = true;
 }
 
@@ -625,9 +653,15 @@ void WiggleKitServer::plane_collider_set_normal( uint32_t p_id, const Vector3 &p
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, plane_colliders.size() );
     ERR_FAIL_COND( !plane_colliders[p_id].active );
-    plane_colliders[p_id].previous_normal = plane_colliders[p_id].normal;
-    plane_colliders[p_id].normal = p_normal.normalized();
+    plane_colliders[p_id].next_normal = p_normal.normalized();
     plane_colliders[p_id].normal_dirty = true;
+}
+
+void WiggleKitServer::plane_collider_set_velocity_factor( uint32_t p_id, float p_factor )
+{
+    ERR_FAIL_UNSIGNED_INDEX( p_id, plane_colliders.size() );
+    ERR_FAIL_COND( !plane_colliders[p_id].active );
+    plane_colliders[p_id].velocity_factor = p_factor;
 }
 
 void WiggleKitServer::plane_collider_add_particle( uint32_t p_id, uint32_t p_particle_id )
@@ -674,6 +708,7 @@ uint32_t WiggleKitServer::sphere_collider_create( const Vector3 &p_position, flo
     SphereCollider &sc = sphere_colliders[index];
     sc.position = p_position;
     sc.previous_position = p_position;
+    sc.next_position = p_position;
     sc.velocity = Vector3();
     sc.radius = p_radius;
     sc.bounciness = p_bounciness;
@@ -700,8 +735,7 @@ void WiggleKitServer::sphere_collider_set_position( uint32_t p_id, const Vector3
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, sphere_colliders.size() );
     ERR_FAIL_COND( !sphere_colliders[p_id].active );
-    sphere_colliders[p_id].previous_position = sphere_colliders[p_id].position;
-    sphere_colliders[p_id].position = p_position;
+    sphere_colliders[p_id].next_position = p_position;
     sphere_colliders[p_id].position_dirty = true;
 }
 
@@ -710,6 +744,13 @@ void WiggleKitServer::sphere_collider_set_radius( uint32_t p_id, float p_radius 
     ERR_FAIL_UNSIGNED_INDEX( p_id, sphere_colliders.size() );
     ERR_FAIL_COND( !sphere_colliders[p_id].active );
     sphere_colliders[p_id].radius = p_radius;
+}
+
+void WiggleKitServer::sphere_collider_set_velocity_factor( uint32_t p_id, float p_factor )
+{
+    ERR_FAIL_UNSIGNED_INDEX( p_id, sphere_colliders.size() );
+    ERR_FAIL_COND( !sphere_colliders[p_id].active );
+    sphere_colliders[p_id].velocity_factor = p_factor;
 }
 
 void WiggleKitServer::sphere_collider_add_particle( uint32_t p_id, uint32_t p_particle_id )
@@ -756,10 +797,12 @@ uint32_t WiggleKitServer::box_collider_create( const Vector3 &p_position, const 
     BoxCollider &bc = box_colliders[index];
     bc.position = p_position;
     bc.previous_position = p_position;
+    bc.next_position = p_position;
     bc.velocity = Vector3();
     bc.angular_velocity = Vector3();
     bc.basis = p_basis;
     bc.previous_basis = p_basis;
+    bc.next_basis = p_basis;
     bc.size = p_size;
     bc.bounciness = p_bounciness;
     bc.friction = p_friction;
@@ -786,8 +829,7 @@ void WiggleKitServer::box_collider_set_position( uint32_t p_id, const Vector3 &p
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
     ERR_FAIL_COND( !box_colliders[p_id].active );
-    box_colliders[p_id].previous_position = box_colliders[p_id].position;
-    box_colliders[p_id].position = p_position;
+    box_colliders[p_id].next_position = p_position;
     box_colliders[p_id].position_dirty = true;
 }
 
@@ -795,8 +837,7 @@ void WiggleKitServer::box_collider_set_basis( uint32_t p_id, const Basis &p_basi
 {
     ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
     ERR_FAIL_COND( !box_colliders[p_id].active );
-    box_colliders[p_id].previous_basis = box_colliders[p_id].basis;
-    box_colliders[p_id].basis = p_basis;
+    box_colliders[p_id].next_basis = p_basis;
     box_colliders[p_id].basis_dirty = true;
 }
 
@@ -805,6 +846,13 @@ void WiggleKitServer::box_collider_set_size( uint32_t p_id, const Vector3 &p_siz
     ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
     ERR_FAIL_COND( !box_colliders[p_id].active );
     box_colliders[p_id].size = p_size;
+}
+
+void WiggleKitServer::box_collider_set_velocity_factor( uint32_t p_id, float p_factor )
+{
+    ERR_FAIL_UNSIGNED_INDEX( p_id, box_colliders.size() );
+    ERR_FAIL_COND( !box_colliders[p_id].active );
+    box_colliders[p_id].velocity_factor = p_factor;
 }
 
 void WiggleKitServer::box_collider_add_particle( uint32_t p_id, uint32_t p_particle_id )
@@ -1240,35 +1288,59 @@ void WiggleKitServer::iteration( float p_delta )
     float inv_sub_delta_sq = inv_sub_delta * inv_sub_delta;
     float inv_delta = 1.0f / p_delta;
 
-    // Compute collider velocities from position/orientation changes (only when dirty)
+    // Advance collider state for this iteration.
+    //
+    // Invariant coming in: `position` / `normal` / `basis` hold the state the
+    // particles last saw at the end of the previous iteration. `next_*` holds
+    // the latest target written by the main thread via set_*(); if no setter
+    // was called since the last iteration, `next_* == position/normal/basis`
+    // already and the collider is stationary this frame.
+    //
+    // Here we snapshot the start-of-frame pose into `previous_*`, derive
+    // linear/angular velocities from the (previous -> next) delta, and clear
+    // the dirty flags. The substep loop below then interpolates
+    // `previous_* -> next_*` across substeps, landing exactly on `next_*` at
+    // substep_t == 1.
     for ( PlaneCollider &pc : plane_colliders )
     {
         if ( !pc.active )
         {
             continue;
         }
+        pc.previous_position = pc.position;
         if ( pc.position_dirty )
         {
-            pc.velocity = ( pc.position - pc.previous_position ) * inv_delta;
+            pc.velocity = ( pc.next_position - pc.previous_position ) * inv_delta;
             pc.position_dirty = false;
         }
+        else
+        {
+            pc.velocity = Vector3();
+            pc.next_position = pc.previous_position;
+        }
+
+        pc.previous_normal = pc.normal;
+        pc.angular_velocity = Vector3();
         if ( pc.normal_dirty )
         {
-            pc.angular_velocity = Vector3();
-            if ( pc.normal != pc.previous_normal )
+            if ( pc.next_normal != pc.previous_normal )
             {
                 // Compute angular velocity from normal change: ω = (old_normal × new_normal) *
                 // angle / delta
-                Vector3 cross = pc.previous_normal.cross( pc.normal );
+                Vector3 cross = pc.previous_normal.cross( pc.next_normal );
                 float sin_angle = cross.length();
                 if ( sin_angle > 0.0001f )
                 {
-                    float cos_angle = pc.previous_normal.dot( pc.normal );
+                    float cos_angle = pc.previous_normal.dot( pc.next_normal );
                     float angle = std::atan2( sin_angle, cos_angle );
                     pc.angular_velocity = ( cross / sin_angle ) * angle * inv_delta;
                 }
             }
             pc.normal_dirty = false;
+        }
+        else
+        {
+            pc.next_normal = pc.previous_normal;
         }
     }
 
@@ -1278,10 +1350,16 @@ void WiggleKitServer::iteration( float p_delta )
         {
             continue;
         }
+        sc.previous_position = sc.position;
         if ( sc.position_dirty )
         {
-            sc.velocity = ( sc.position - sc.previous_position ) * inv_delta;
+            sc.velocity = ( sc.next_position - sc.previous_position ) * inv_delta;
             sc.position_dirty = false;
+        }
+        else
+        {
+            sc.velocity = Vector3();
+            sc.next_position = sc.previous_position;
         }
     }
 
@@ -1291,19 +1369,27 @@ void WiggleKitServer::iteration( float p_delta )
         {
             continue;
         }
+        bc.previous_position = bc.position;
         if ( bc.position_dirty )
         {
-            bc.velocity = ( bc.position - bc.previous_position ) * inv_delta;
+            bc.velocity = ( bc.next_position - bc.previous_position ) * inv_delta;
             bc.position_dirty = false;
         }
+        else
+        {
+            bc.velocity = Vector3();
+            bc.next_position = bc.previous_position;
+        }
+
+        bc.previous_basis = bc.basis;
+        bc.angular_velocity = Vector3();
         if ( bc.basis_dirty )
         {
-            bc.angular_velocity = Vector3();
-            if ( bc.basis != bc.previous_basis )
+            if ( bc.next_basis != bc.previous_basis )
             {
-                // Compute angular velocity from basis change: R = basis * previous_basis^-1
+                // Compute angular velocity from basis change: R = next_basis * previous_basis^-1
                 // Extract axis-angle from R to get ω = axis * angle / delta
-                Basis R = bc.basis * bc.previous_basis.inverse();
+                Basis R = bc.next_basis * bc.previous_basis.inverse();
                 // Extract axis-angle from rotation matrix R
                 // angle = acos((trace(R) - 1) / 2)
                 // axis = (1 / (2*sin(angle))) * [R32-R23, R13-R31, R21-R12]
@@ -1328,6 +1414,39 @@ void WiggleKitServer::iteration( float p_delta )
             }
             bc.basis_dirty = false;
         }
+        else
+        {
+            bc.next_basis = bc.previous_basis;
+        }
+    }
+
+    // Advance kinematic (mass-0) particle state for this iteration.
+    //
+    // Same invariant as colliders: `position` holds the state the dynamic
+    // particles last saw at the end of the previous iteration.
+    // `next_position` holds the latest target written via particle_set_position();
+    // if no setter was called since the last iteration, we treat the particle
+    // as stationary. The substep loop interpolates `previous_position ->
+    // next_position` across substeps, landing exactly on `next_position` at
+    // substep_t == 1. This prevents the single-substep velocity spike that
+    // a "teleport anchor" would otherwise impose on any dynamic particles
+    // constrained to it.
+    for ( uint32_t i = 0; i < particles.size(); i++ )
+    {
+        Particle &p = particles[i];
+        if ( !p.active || p.inv_mass != 0.0f )
+        {
+            continue;
+        }
+        p.previous_position = p.position;
+        if ( p.position_dirty )
+        {
+            p.position_dirty = false;
+        }
+        else
+        {
+            p.next_position = p.previous_position;
+        }
     }
 
     for ( uint32_t step = 0; step < substeps; step++ )
@@ -1339,24 +1458,27 @@ void WiggleKitServer::iteration( float p_delta )
         {
             if ( pc.active )
             {
-                pc.position = pc.previous_position + pc.velocity * p_delta * substep_t;
-                pc.normal = ( pc.previous_normal + pc.angular_velocity.cross( pc.previous_normal ) *
-                                                       p_delta * substep_t )
-                                .normalized();
+                pc.position =
+                    pc.previous_position + ( pc.next_position - pc.previous_position ) * substep_t;
+                pc.normal =
+                    ( pc.previous_normal + ( pc.next_normal - pc.previous_normal ) * substep_t )
+                        .normalized();
             }
         }
         for ( SphereCollider &sc : sphere_colliders )
         {
             if ( sc.active )
             {
-                sc.position = sc.previous_position + sc.velocity * p_delta * substep_t;
+                sc.position =
+                    sc.previous_position + ( sc.next_position - sc.previous_position ) * substep_t;
             }
         }
         for ( BoxCollider &bc : box_colliders )
         {
             if ( bc.active )
             {
-                bc.position = bc.previous_position + bc.velocity * p_delta * substep_t;
+                bc.position =
+                    bc.previous_position + ( bc.next_position - bc.previous_position ) * substep_t;
                 // Interpolate basis using angular velocity (small-angle approximation)
                 // For substep interpolation, apply ω * t as a rotation
                 Vector3 omega_t = bc.angular_velocity * p_delta * substep_t;
@@ -1382,6 +1504,19 @@ void WiggleKitServer::iteration( float p_delta )
                 }
             }
         }
+
+        // Interpolate kinematic (mass-0) particle positions for this substep
+        for ( uint32_t i = 0; i < particles.size(); i++ )
+        {
+            Particle &p = particles[i];
+            if ( !p.active || p.inv_mass != 0.0f )
+            {
+                continue;
+            }
+            p.position = p.previous_position +
+                         ( p.next_position - p.previous_position ) * substep_t;
+        }
+
         // 1. Predict positions
         for ( uint32_t i = 0; i < particles.size(); i++ )
         {
@@ -1720,10 +1855,13 @@ void WiggleKitServer::iteration( float p_delta )
                 // Friction
                 if ( pc.friction > 0.0f )
                 {
-                    Vector3 r = p.position - pc.position;
-                    Vector3 v_surface = pc.velocity + pc.angular_velocity.cross( r );
-                    Vector3 surface_move = v_surface * sub_delta;
-                    Vector3 relative_move = ( p.position - p.previous_position ) - surface_move;
+                    // Displacement of the contact point on the collider over this substep,
+                    // so friction resists sliding relative to the collider, not world motion.
+                    Vector3 contact_move =
+                        ( pc.velocity +
+                          pc.angular_velocity.cross( p.position - pc.position ) ) *
+                        sub_delta * pc.velocity_factor;
+                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
                     Vector3 normal_component = relative_move.dot( pc.normal ) * pc.normal;
                     Vector3 tangent_component = relative_move - normal_component;
                     float lateral_dist = tangent_component.length();
@@ -1788,7 +1926,8 @@ void WiggleKitServer::iteration( float p_delta )
                 // Friction
                 if ( sc.friction > 0.0f )
                 {
-                    Vector3 relative_move = p.position - p.previous_position;
+                    Vector3 contact_move = sc.velocity * sub_delta * sc.velocity_factor;
+                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
                     Vector3 normal_component = relative_move.dot( normal ) * normal;
                     Vector3 tangent_component = relative_move - normal_component;
                     float lateral_dist = tangent_component.length();
@@ -1886,10 +2025,11 @@ void WiggleKitServer::iteration( float p_delta )
                 // Friction
                 if ( bc.friction > 0.0f )
                 {
-                    Vector3 r = p.position - bc.position;
-                    Vector3 v_surface = bc.velocity + bc.angular_velocity.cross( r );
-                    Vector3 surface_move = v_surface * sub_delta;
-                    Vector3 relative_move = ( p.position - p.previous_position ) - surface_move;
+                    Vector3 contact_move =
+                        ( bc.velocity +
+                          bc.angular_velocity.cross( p.position - bc.position ) ) *
+                        sub_delta * bc.velocity_factor;
+                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
                     Vector3 normal_component = relative_move.dot( normal ) * normal;
                     Vector3 tangent_component = relative_move - normal_component;
                     float lateral_dist = tangent_component.length();
@@ -1932,9 +2072,10 @@ void WiggleKitServer::iteration( float p_delta )
                 float dist = pc.normal.dot( p.position - pc.position );
                 if ( dist < 0.01f )
                 {
-                    Vector3 r = p.position - pc.position;
-                    Vector3 v_surface = pc.velocity + pc.angular_velocity.cross( r );
-                    float v_rel_n = ( p.velocity - v_surface ).dot( pc.normal );
+                    Vector3 collider_vel =
+                        ( pc.velocity + pc.angular_velocity.cross( p.position - pc.position ) ) *
+                        pc.velocity_factor;
+                    float v_rel_n = ( p.velocity - collider_vel ).dot( pc.normal );
                     if ( v_rel_n < 0.0f )
                     {
                         p.velocity -= ( 1.0f + pc.bounciness ) * v_rel_n * pc.normal;
@@ -1980,7 +2121,8 @@ void WiggleKitServer::iteration( float p_delta )
 
                 if ( near_surface )
                 {
-                    float v_rel_n = ( p.velocity - sc.velocity ).dot( normal );
+                    float v_rel_n =
+                        ( p.velocity - sc.velocity * sc.velocity_factor ).dot( normal );
                     if ( v_rel_n < 0.0f )
                     {
                         p.velocity -= ( 1.0f + sc.bounciness ) * v_rel_n * normal;
@@ -2052,9 +2194,10 @@ void WiggleKitServer::iteration( float p_delta )
                 if ( near_surface )
                 {
                     Vector3 normal = bc.basis.xform( local_normal );
-                    Vector3 r = p.position - bc.position;
-                    Vector3 v_surface = bc.velocity + bc.angular_velocity.cross( r );
-                    float v_rel_n = ( p.velocity - v_surface ).dot( normal );
+                    Vector3 collider_vel =
+                        ( bc.velocity + bc.angular_velocity.cross( p.position - bc.position ) ) *
+                        bc.velocity_factor;
+                    float v_rel_n = ( p.velocity - collider_vel ).dot( normal );
                     if ( v_rel_n < 0.0f )
                     {
                         p.velocity -= ( 1.0f + bc.bounciness ) * v_rel_n * normal;
