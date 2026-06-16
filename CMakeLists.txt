@@ -148,7 +148,22 @@ set_target_properties( godot-cpp
         CXX_VISIBILITY_PRESET hidden    # visibility needs to be the same as the main library
 )
 
+# Tracy profiling
+# Enable with -DPROFILING_ENABLED=ON (intended for a Release build). When off,
+# the PROFILE_* macros in src/profiling.h compile to nothing and Tracy is not
+# built or linked.
+set( PROFILING_ENABLED OFF CACHE BOOL "" )
+if (PROFILING_ENABLED)
+    add_compile_definitions(TRACY_ON_DEMAND)
+    add_compile_definitions(TRACY_IMPORTS)
+    add_compile_definitions(TRACY_ENABLE)
+    set ( TRACY_STATIC OFF CACHE BOOL "" FORCE )
+    add_subdirectory( extern/tracy )
+    add_compile_definitions(PROFILING_ENABLED)
+endif()
+
 target_link_libraries( ${PROJECT_NAME}
     PRIVATE
         godot-cpp
+        $<$<BOOL:${PROFILING_ENABLED}>:TracyClient>
 )

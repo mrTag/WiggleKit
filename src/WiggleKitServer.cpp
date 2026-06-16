@@ -1,6 +1,7 @@
 #include "WiggleKitServer.h"
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/variant/utility_functions.hpp"
+#include "profiling.h"
 
 using namespace godot;
 
@@ -1278,6 +1279,8 @@ uint32_t WiggleKitServer::get_substeps() const
 
 void WiggleKitServer::iteration( float p_delta )
 {
+    PROFILE_FUNCTION();
+
     if ( p_delta <= 0.0f || substeps == 0 )
     {
         return;
@@ -1535,509 +1538,518 @@ void WiggleKitServer::iteration( float p_delta )
         }
 
         // 2. Constraints (XPBD)
-        for ( uint32_t i = 0; i < distance_constraints.size(); i++ )
         {
-            DistanceConstraint &c = distance_constraints[i];
-            if ( !c.active || c.particle_a == INVALID_ID || c.particle_b == INVALID_ID )
+            PROFILE_FUNCTION_NAMED( "Constraints" );
+            for ( uint32_t i = 0; i < distance_constraints.size(); i++ )
             {
-                continue;
+                DistanceConstraint &c = distance_constraints[i];
+                if ( !c.active || c.particle_a == INVALID_ID || c.particle_b == INVALID_ID )
+                {
+                    continue;
+                }
+
+                Particle &pa = particles[c.particle_a];
+                Particle &pb = particles[c.particle_b];
+
+                float w_a = pa.inv_mass;
+                float w_b = pb.inv_mass;
+                float w_sum = w_a + w_b;
+
+                if ( w_sum == 0.0f )
+                {
+                    continue;
+                }
+
+                Vector3 diff = pa.position - pb.position;
+                float dist = diff.length();
+                if ( dist < 0.0001f )
+                {
+                    continue;
+                }
+
+                Vector3 n = diff / dist;
+                float C = dist - c.rest_length;
+                float alpha = c.compliance * inv_sub_delta_sq;
+
+                // Simplified XPBD for substeps: No lambda tracking across iterations,
+                // because there is only 1 "iteration" per substep.
+                float d_lambda = -C / ( w_sum + alpha );
+
+                pa.position += n * ( d_lambda * w_a );
+                pb.position -= n * ( d_lambda * w_b );
             }
 
-            Particle &pa = particles[c.particle_a];
-            Particle &pb = particles[c.particle_b];
-
-            float w_a = pa.inv_mass;
-            float w_b = pb.inv_mass;
-            float w_sum = w_a + w_b;
-
-            if ( w_sum == 0.0f )
+            for ( uint32_t i = 0; i < tetrahedral_constraints.size(); i++ )
             {
-                continue;
+                TetrahedralConstraint &c = tetrahedral_constraints[i];
+                if ( !c.active )
+                {
+                    continue;
+                }
+
+                Particle &p1 = particles[c.particles[0]];
+                Particle &p2 = particles[c.particles[1]];
+                Particle &p3 = particles[c.particles[2]];
+                Particle &p4 = particles[c.particles[3]];
+
+                float w1 = p1.inv_mass;
+                float w2 = p2.inv_mass;
+                float w3 = p3.inv_mass;
+                float w4 = p4.inv_mass;
+
+                if ( w1 + w2 + w3 + w4 == 0.0f )
+                {
+                    continue;
+                }
+
+                // Gradients for C = 1/6 * (p2-p1) . ((p3-p1) x (p4-p1)) - V_rest
+                Vector3 grad2 =
+                    ( 1.0f / 6.0f ) * ( p3.position - p1.position ).cross( p4.position - p1.position );
+                Vector3 grad3 =
+                    ( 1.0f / 6.0f ) * ( p4.position - p1.position ).cross( p2.position - p1.position );
+                Vector3 grad4 =
+                    ( 1.0f / 6.0f ) * ( p2.position - p1.position ).cross( p3.position - p1.position );
+                Vector3 grad1 = -( grad2 + grad3 + grad4 );
+
+                float w_sum = w1 * grad1.length_squared() + w2 * grad2.length_squared() +
+                              w3 * grad3.length_squared() + w4 * grad4.length_squared();
+
+                if ( w_sum == 0.0f )
+                {
+                    continue;
+                }
+
+                float current_vol =
+                    ( 1.0f / 6.0f ) *
+                    ( p2.position - p1.position )
+                        .dot( ( p3.position - p1.position ).cross( p4.position - p1.position ) );
+                float C = current_vol - c.rest_volume;
+                float alpha = c.compliance * inv_sub_delta_sq;
+
+                float d_lambda = -C / ( w_sum + alpha );
+
+                p1.position += d_lambda * w1 * grad1;
+                p2.position += d_lambda * w2 * grad2;
+                p3.position += d_lambda * w3 * grad3;
+                p4.position += d_lambda * w4 * grad4;
             }
-
-            Vector3 diff = pa.position - pb.position;
-            float dist = diff.length();
-            if ( dist < 0.0001f )
-            {
-                continue;
-            }
-
-            Vector3 n = diff / dist;
-            float C = dist - c.rest_length;
-            float alpha = c.compliance * inv_sub_delta_sq;
-
-            // Simplified XPBD for substeps: No lambda tracking across iterations,
-            // because there is only 1 "iteration" per substep.
-            float d_lambda = -C / ( w_sum + alpha );
-
-            pa.position += n * ( d_lambda * w_a );
-            pb.position -= n * ( d_lambda * w_b );
-        }
-
-        for ( uint32_t i = 0; i < tetrahedral_constraints.size(); i++ )
-        {
-            TetrahedralConstraint &c = tetrahedral_constraints[i];
-            if ( !c.active )
-            {
-                continue;
-            }
-
-            Particle &p1 = particles[c.particles[0]];
-            Particle &p2 = particles[c.particles[1]];
-            Particle &p3 = particles[c.particles[2]];
-            Particle &p4 = particles[c.particles[3]];
-
-            float w1 = p1.inv_mass;
-            float w2 = p2.inv_mass;
-            float w3 = p3.inv_mass;
-            float w4 = p4.inv_mass;
-
-            if ( w1 + w2 + w3 + w4 == 0.0f )
-            {
-                continue;
-            }
-
-            // Gradients for C = 1/6 * (p2-p1) . ((p3-p1) x (p4-p1)) - V_rest
-            Vector3 grad2 =
-                ( 1.0f / 6.0f ) * ( p3.position - p1.position ).cross( p4.position - p1.position );
-            Vector3 grad3 =
-                ( 1.0f / 6.0f ) * ( p4.position - p1.position ).cross( p2.position - p1.position );
-            Vector3 grad4 =
-                ( 1.0f / 6.0f ) * ( p2.position - p1.position ).cross( p3.position - p1.position );
-            Vector3 grad1 = -( grad2 + grad3 + grad4 );
-
-            float w_sum = w1 * grad1.length_squared() + w2 * grad2.length_squared() +
-                          w3 * grad3.length_squared() + w4 * grad4.length_squared();
-
-            if ( w_sum == 0.0f )
-            {
-                continue;
-            }
-
-            float current_vol =
-                ( 1.0f / 6.0f ) *
-                ( p2.position - p1.position )
-                    .dot( ( p3.position - p1.position ).cross( p4.position - p1.position ) );
-            float C = current_vol - c.rest_volume;
-            float alpha = c.compliance * inv_sub_delta_sq;
-
-            float d_lambda = -C / ( w_sum + alpha );
-
-            p1.position += d_lambda * w1 * grad1;
-            p2.position += d_lambda * w2 * grad2;
-            p3.position += d_lambda * w3 * grad3;
-            p4.position += d_lambda * w4 * grad4;
         }
 
         // SDF constraints (XPBD)
-        for ( PlaneSDF &sdf : plane_sdfs )
         {
-            if ( !sdf.active )
+            PROFILE_FUNCTION_NAMED( "SDF constraints" );
+            for ( PlaneSDF &sdf : plane_sdfs )
             {
-                continue;
-            }
-            float alpha = sdf.compliance * inv_sub_delta_sq;
-
-            for ( uint32_t p_idx : sdf.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active || p.inv_mass == 0.0f )
+                if ( !sdf.active )
                 {
                     continue;
                 }
+                float alpha = sdf.compliance * inv_sub_delta_sq;
 
-                // Signed distance from plane: C = dot(pos - plane_pos, normal) - rest_distance
-                float signed_dist = sdf.normal.dot( p.position - sdf.position );
-                float C = signed_dist - sdf.rest_distance;
-
-                // grad C = normal, |grad C|^2 = 1
-                float d_lambda = -C / ( p.inv_mass + alpha );
-                p.position += sdf.normal * ( d_lambda * p.inv_mass );
-            }
-        }
-
-        for ( SphereSDF &sdf : sphere_sdfs )
-        {
-            if ( !sdf.active )
-            {
-                continue;
-            }
-            float alpha = sdf.compliance * inv_sub_delta_sq;
-
-            for ( uint32_t p_idx : sdf.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active || p.inv_mass == 0.0f )
+                for ( uint32_t p_idx : sdf.particles )
                 {
-                    continue;
-                }
-
-                Vector3 diff = p.position - sdf.position;
-                float dist = diff.length();
-                if ( dist < 0.0001f )
-                {
-                    continue;
-                }
-
-                // Signed distance from sphere surface: positive = outside
-                float signed_dist = dist - sdf.radius;
-                float C = signed_dist - sdf.rest_distance;
-
-                Vector3 grad = diff / dist;
-                float d_lambda = -C / ( p.inv_mass + alpha );
-                p.position += grad * ( d_lambda * p.inv_mass );
-            }
-        }
-
-        for ( LineSDF &sdf : line_sdfs )
-        {
-            if ( !sdf.active )
-            {
-                continue;
-            }
-            float alpha = sdf.compliance * inv_sub_delta_sq;
-
-            Vector3 ab = sdf.position_b - sdf.position_a;
-            float ab_len_sq = ab.length_squared();
-
-            for ( uint32_t p_idx : sdf.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active || p.inv_mass == 0.0f )
-                {
-                    continue;
-                }
-
-                // Project onto line to find closest point
-                Vector3 ap = p.position - sdf.position_a;
-                float t = ab_len_sq > 0.0001f ? ap.dot( ab ) / ab_len_sq : 0.0f;
-
-                // Clamp to segment if not infinite
-                if ( !sdf.infinite )
-                {
-                    if ( t < 0.0f )
-                    {
-                        t = 0.0f;
-                    }
-                    else if ( t > 1.0f )
-                    {
-                        t = 1.0f;
-                    }
-                }
-
-                Vector3 closest = sdf.position_a + ab * t;
-                Vector3 diff = p.position - closest;
-                float dist = diff.length();
-                if ( dist < 0.0001f )
-                {
-                    continue;
-                }
-
-                float C = dist - sdf.rest_distance;
-
-                Vector3 grad = diff / dist;
-                float d_lambda = -C / ( p.inv_mass + alpha );
-                p.position += grad * ( d_lambda * p.inv_mass );
-            }
-        }
-
-        for ( BoxSDF &sdf : box_sdfs )
-        {
-            if ( !sdf.active )
-            {
-                continue;
-            }
-            float alpha = sdf.compliance * inv_sub_delta_sq;
-
-            for ( uint32_t p_idx : sdf.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active || p.inv_mass == 0.0f )
-                {
-                    continue;
-                }
-
-                // Transform to local box space
-                Vector3 local_pos = sdf.basis.xform_inv( p.position - sdf.position );
-                Vector3 half_extents = sdf.size * 0.5f;
-
-                // Signed distance to box (negative inside, positive outside)
-                Vector3 d = local_pos.abs() - half_extents;
-                float outside_dist = Vector3( UtilityFunctions::maxf( d.x, 0.0f ),
-                                              UtilityFunctions::maxf( d.y, 0.0f ),
-                                              UtilityFunctions::maxf( d.z, 0.0f ) )
-                                         .length();
-                float inside_dist = UtilityFunctions::minf(
-                    UtilityFunctions::maxf( d.x, UtilityFunctions::maxf( d.y, d.z ) ), 0.0f );
-                float signed_dist = outside_dist + inside_dist;
-
-                float C = signed_dist - sdf.rest_distance;
-
-                // Compute gradient (normal direction of SDF)
-                Vector3 local_grad;
-                if ( d.x > 0.0f || d.y > 0.0f || d.z > 0.0f )
-                {
-                    // Outside: gradient points from closest surface point to particle
-                    Vector3 clamped;
-                    clamped.x =
-                        UtilityFunctions::clampf( local_pos.x, -half_extents.x, half_extents.x );
-                    clamped.y =
-                        UtilityFunctions::clampf( local_pos.y, -half_extents.y, half_extents.y );
-                    clamped.z =
-                        UtilityFunctions::clampf( local_pos.z, -half_extents.z, half_extents.z );
-                    local_grad = local_pos - clamped;
-                    float len = local_grad.length();
-                    if ( len < 0.0001f )
+                    Particle &p = particles[p_idx];
+                    if ( !p.active || p.inv_mass == 0.0f )
                     {
                         continue;
                     }
-                    local_grad /= len;
-                }
-                else
-                {
-                    // Inside: gradient points toward nearest face
-                    int axis = 0;
-                    float max_d = d.x;
-                    if ( d.y > max_d )
-                    {
-                        axis = 1;
-                        max_d = d.y;
-                    }
-                    if ( d.z > max_d )
-                    {
-                        axis = 2;
-                        max_d = d.z;
-                    }
-                    local_grad = Vector3( 0, 0, 0 );
-                    local_grad[axis] = local_pos[axis] > 0 ? 1.0f : -1.0f;
-                }
 
-                Vector3 grad = sdf.basis.xform( local_grad );
-                float d_lambda = -C / ( p.inv_mass + alpha );
-                p.position += grad * ( d_lambda * p.inv_mass );
+                    // Signed distance from plane: C = dot(pos - plane_pos, normal) - rest_distance
+                    float signed_dist = sdf.normal.dot( p.position - sdf.position );
+                    float C = signed_dist - sdf.rest_distance;
+
+                    // grad C = normal, |grad C|^2 = 1
+                    float d_lambda = -C / ( p.inv_mass + alpha );
+                    p.position += sdf.normal * ( d_lambda * p.inv_mass );
+                }
+            }
+
+            for ( SphereSDF &sdf : sphere_sdfs )
+            {
+                if ( !sdf.active )
+                {
+                    continue;
+                }
+                float alpha = sdf.compliance * inv_sub_delta_sq;
+
+                for ( uint32_t p_idx : sdf.particles )
+                {
+                    Particle &p = particles[p_idx];
+                    if ( !p.active || p.inv_mass == 0.0f )
+                    {
+                        continue;
+                    }
+
+                    Vector3 diff = p.position - sdf.position;
+                    float dist = diff.length();
+                    if ( dist < 0.0001f )
+                    {
+                        continue;
+                    }
+
+                    // Signed distance from sphere surface: positive = outside
+                    float signed_dist = dist - sdf.radius;
+                    float C = signed_dist - sdf.rest_distance;
+
+                    Vector3 grad = diff / dist;
+                    float d_lambda = -C / ( p.inv_mass + alpha );
+                    p.position += grad * ( d_lambda * p.inv_mass );
+                }
+            }
+
+            for ( LineSDF &sdf : line_sdfs )
+            {
+                if ( !sdf.active )
+                {
+                    continue;
+                }
+                float alpha = sdf.compliance * inv_sub_delta_sq;
+
+                Vector3 ab = sdf.position_b - sdf.position_a;
+                float ab_len_sq = ab.length_squared();
+
+                for ( uint32_t p_idx : sdf.particles )
+                {
+                    Particle &p = particles[p_idx];
+                    if ( !p.active || p.inv_mass == 0.0f )
+                    {
+                        continue;
+                    }
+
+                    // Project onto line to find closest point
+                    Vector3 ap = p.position - sdf.position_a;
+                    float t = ab_len_sq > 0.0001f ? ap.dot( ab ) / ab_len_sq : 0.0f;
+
+                    // Clamp to segment if not infinite
+                    if ( !sdf.infinite )
+                    {
+                        if ( t < 0.0f )
+                        {
+                            t = 0.0f;
+                        }
+                        else if ( t > 1.0f )
+                        {
+                            t = 1.0f;
+                        }
+                    }
+
+                    Vector3 closest = sdf.position_a + ab * t;
+                    Vector3 diff = p.position - closest;
+                    float dist = diff.length();
+                    if ( dist < 0.0001f )
+                    {
+                        continue;
+                    }
+
+                    float C = dist - sdf.rest_distance;
+
+                    Vector3 grad = diff / dist;
+                    float d_lambda = -C / ( p.inv_mass + alpha );
+                    p.position += grad * ( d_lambda * p.inv_mass );
+                }
+            }
+
+            for ( BoxSDF &sdf : box_sdfs )
+            {
+                if ( !sdf.active )
+                {
+                    continue;
+                }
+                float alpha = sdf.compliance * inv_sub_delta_sq;
+
+                for ( uint32_t p_idx : sdf.particles )
+                {
+                    Particle &p = particles[p_idx];
+                    if ( !p.active || p.inv_mass == 0.0f )
+                    {
+                        continue;
+                    }
+
+                    // Transform to local box space
+                    Vector3 local_pos = sdf.basis.xform_inv( p.position - sdf.position );
+                    Vector3 half_extents = sdf.size * 0.5f;
+
+                    // Signed distance to box (negative inside, positive outside)
+                    Vector3 d = local_pos.abs() - half_extents;
+                    float outside_dist = Vector3( UtilityFunctions::maxf( d.x, 0.0f ),
+                                                  UtilityFunctions::maxf( d.y, 0.0f ),
+                                                  UtilityFunctions::maxf( d.z, 0.0f ) )
+                                             .length();
+                    float inside_dist = UtilityFunctions::minf(
+                        UtilityFunctions::maxf( d.x, UtilityFunctions::maxf( d.y, d.z ) ), 0.0f );
+                    float signed_dist = outside_dist + inside_dist;
+
+                    float C = signed_dist - sdf.rest_distance;
+
+                    // Compute gradient (normal direction of SDF)
+                    Vector3 local_grad;
+                    if ( d.x > 0.0f || d.y > 0.0f || d.z > 0.0f )
+                    {
+                        // Outside: gradient points from closest surface point to particle
+                        Vector3 clamped;
+                        clamped.x =
+                            UtilityFunctions::clampf( local_pos.x, -half_extents.x, half_extents.x );
+                        clamped.y =
+                            UtilityFunctions::clampf( local_pos.y, -half_extents.y, half_extents.y );
+                        clamped.z =
+                            UtilityFunctions::clampf( local_pos.z, -half_extents.z, half_extents.z );
+                        local_grad = local_pos - clamped;
+                        float len = local_grad.length();
+                        if ( len < 0.0001f )
+                        {
+                            continue;
+                        }
+                        local_grad /= len;
+                    }
+                    else
+                    {
+                        // Inside: gradient points toward nearest face
+                        int axis = 0;
+                        float max_d = d.x;
+                        if ( d.y > max_d )
+                        {
+                            axis = 1;
+                            max_d = d.y;
+                        }
+                        if ( d.z > max_d )
+                        {
+                            axis = 2;
+                            max_d = d.z;
+                        }
+                        local_grad = Vector3( 0, 0, 0 );
+                        local_grad[axis] = local_pos[axis] > 0 ? 1.0f : -1.0f;
+                    }
+
+                    Vector3 grad = sdf.basis.xform( local_grad );
+                    float d_lambda = -C / ( p.inv_mass + alpha );
+                    p.position += grad * ( d_lambda * p.inv_mass );
+                }
             }
         }
 
         // 3. Collision constraints (XPBD-style)
-        for ( PlaneCollider &pc : plane_colliders )
         {
-            if ( !pc.active )
+            PROFILE_FUNCTION_NAMED( "Collision constraints" );
+            for ( PlaneCollider &pc : plane_colliders )
             {
-                continue;
-            }
-
-            for ( uint32_t p_idx : pc.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active )
+                if ( !pc.active )
                 {
                     continue;
                 }
 
-                float dist = pc.normal.dot( p.position - pc.position );
-                if ( dist >= 0.0f )
+                for ( uint32_t p_idx : pc.particles )
                 {
-                    continue;
-                }
-
-                float penetration = -dist;
-
-                // Unilateral non-penetration constraint: C = dist, grad = normal
-                // w = inv_mass, d_lambda = -C / (w + alpha) with alpha = 0 (rigid collision)
-                float w = p.inv_mass;
-                if ( w == 0.0f )
-                {
-                    continue;
-                }
-                float d_lambda = penetration / w;
-                p.position += d_lambda * w * pc.normal;
-
-                // Friction
-                if ( pc.friction > 0.0f )
-                {
-                    // Displacement of the contact point on the collider over this substep,
-                    // so friction resists sliding relative to the collider, not world motion.
-                    Vector3 contact_move =
-                        ( pc.velocity +
-                          pc.angular_velocity.cross( p.position - pc.position ) ) *
-                        sub_delta * pc.velocity_factor;
-                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
-                    Vector3 normal_component = relative_move.dot( pc.normal ) * pc.normal;
-                    Vector3 tangent_component = relative_move - normal_component;
-                    float lateral_dist = tangent_component.length();
-                    if ( lateral_dist > 0.0001f )
-                    {
-                        float friction_reduction =
-                            UtilityFunctions::min( pc.friction * penetration, lateral_dist );
-                        p.position -= tangent_component.normalized() * friction_reduction;
-                    }
-                }
-            }
-        }
-
-        for ( SphereCollider &sc : sphere_colliders )
-        {
-            if ( !sc.active )
-            {
-                continue;
-            }
-
-            for ( uint32_t p_idx : sc.particles )
-            {
-                Particle &p = particles[p_idx];
-                if ( !p.active )
-                {
-                    continue;
-                }
-
-                Vector3 diff = p.position - sc.position;
-                float dist = diff.length();
-                float penetration = 0.0f;
-                Vector3 normal;
-
-                if ( sc.inside )
-                {
-                    if ( dist <= sc.radius )
+                    Particle &p = particles[p_idx];
+                    if ( !p.active )
                     {
                         continue;
                     }
-                    normal = dist > 0.0001f ? -diff / dist : Vector3( 0, -1, 0 );
-                    penetration = dist - sc.radius;
-                }
-                else
-                {
-                    if ( dist >= sc.radius )
+
+                    float dist = pc.normal.dot( p.position - pc.position );
+                    if ( dist >= 0.0f )
                     {
                         continue;
                     }
-                    normal = dist > 0.0001f ? diff / dist : Vector3( 0, 1, 0 );
-                    penetration = sc.radius - dist;
-                }
 
-                // XPBD collision constraint: C = -penetration, grad = normal
-                float w = p.inv_mass;
-                if ( w == 0.0f )
-                {
-                    continue;
-                }
-                float d_lambda = penetration / w;
-                p.position += d_lambda * w * normal;
+                    float penetration = -dist;
 
-                // Friction
-                if ( sc.friction > 0.0f )
-                {
-                    Vector3 contact_move = sc.velocity * sub_delta * sc.velocity_factor;
-                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
-                    Vector3 normal_component = relative_move.dot( normal ) * normal;
-                    Vector3 tangent_component = relative_move - normal_component;
-                    float lateral_dist = tangent_component.length();
-                    if ( lateral_dist > 0.0001f )
+                    // Unilateral non-penetration constraint: C = dist, grad = normal
+                    // w = inv_mass, d_lambda = -C / (w + alpha) with alpha = 0 (rigid collision)
+                    float w = p.inv_mass;
+                    if ( w == 0.0f )
                     {
-                        float friction_reduction =
-                            UtilityFunctions::min( sc.friction * penetration, lateral_dist );
-                        p.position -= tangent_component.normalized() * friction_reduction;
+                        continue;
+                    }
+                    float d_lambda = penetration / w;
+                    p.position += d_lambda * w * pc.normal;
+
+                    // Friction
+                    if ( pc.friction > 0.0f )
+                    {
+                        // Displacement of the contact point on the collider over this substep,
+                        // so friction resists sliding relative to the collider, not world motion.
+                        Vector3 contact_move =
+                            ( pc.velocity +
+                              pc.angular_velocity.cross( p.position - pc.position ) ) *
+                            sub_delta * pc.velocity_factor;
+                        Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
+                        Vector3 normal_component = relative_move.dot( pc.normal ) * pc.normal;
+                        Vector3 tangent_component = relative_move - normal_component;
+                        float lateral_dist = tangent_component.length();
+                        if ( lateral_dist > 0.0001f )
+                        {
+                            float friction_reduction =
+                                UtilityFunctions::min( pc.friction * penetration, lateral_dist );
+                            p.position -= tangent_component.normalized() * friction_reduction;
+                        }
                     }
                 }
             }
-        }
 
-        for ( BoxCollider &bc : box_colliders )
-        {
-            if ( !bc.active )
+            for ( SphereCollider &sc : sphere_colliders )
             {
-                continue;
+                if ( !sc.active )
+                {
+                    continue;
+                }
+
+                for ( uint32_t p_idx : sc.particles )
+                {
+                    Particle &p = particles[p_idx];
+                    if ( !p.active )
+                    {
+                        continue;
+                    }
+
+                    Vector3 diff = p.position - sc.position;
+                    float dist = diff.length();
+                    float penetration = 0.0f;
+                    Vector3 normal;
+
+                    if ( sc.inside )
+                    {
+                        if ( dist <= sc.radius )
+                        {
+                            continue;
+                        }
+                        normal = dist > 0.0001f ? -diff / dist : Vector3( 0, -1, 0 );
+                        penetration = dist - sc.radius;
+                    }
+                    else
+                    {
+                        if ( dist >= sc.radius )
+                        {
+                            continue;
+                        }
+                        normal = dist > 0.0001f ? diff / dist : Vector3( 0, 1, 0 );
+                        penetration = sc.radius - dist;
+                    }
+
+                    // XPBD collision constraint: C = -penetration, grad = normal
+                    float w = p.inv_mass;
+                    if ( w == 0.0f )
+                    {
+                        continue;
+                    }
+                    float d_lambda = penetration / w;
+                    p.position += d_lambda * w * normal;
+
+                    // Friction
+                    if ( sc.friction > 0.0f )
+                    {
+                        Vector3 contact_move = sc.velocity * sub_delta * sc.velocity_factor;
+                        Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
+                        Vector3 normal_component = relative_move.dot( normal ) * normal;
+                        Vector3 tangent_component = relative_move - normal_component;
+                        float lateral_dist = tangent_component.length();
+                        if ( lateral_dist > 0.0001f )
+                        {
+                            float friction_reduction =
+                                UtilityFunctions::min( sc.friction * penetration, lateral_dist );
+                            p.position -= tangent_component.normalized() * friction_reduction;
+                        }
+                    }
+                }
             }
-            for ( uint32_t particle_id : bc.particles )
+
+            for ( BoxCollider &bc : box_colliders )
             {
-                Particle &p = particles[particle_id];
-                if ( !p.active )
+                if ( !bc.active )
                 {
                     continue;
                 }
-
-                // Transform to local space
-                Vector3 local_pos = bc.basis.xform_inv( p.position - bc.position );
-                Vector3 half_extents = bc.size * 0.5f;
-
-                // Check if inside
-                Vector3 d = local_pos.abs() - half_extents;
-                float penetration = 0.0f;
-                Vector3 local_normal = Vector3( 0, 0, 0 );
-
-                if ( bc.inside )
+                for ( uint32_t particle_id : bc.particles )
                 {
-                    if ( d.x <= 0.0f && d.y <= 0.0f && d.z <= 0.0f )
+                    Particle &p = particles[particle_id];
+                    if ( !p.active )
                     {
                         continue;
                     }
-                    // Find the axis with maximum penetration (most outside)
-                    int axis = 0;
-                    float max_val = d.x;
-                    if ( d.y > max_val )
+
+                    // Transform to local space
+                    Vector3 local_pos = bc.basis.xform_inv( p.position - bc.position );
+                    Vector3 half_extents = bc.size * 0.5f;
+
+                    // Check if inside
+                    Vector3 d = local_pos.abs() - half_extents;
+                    float penetration = 0.0f;
+                    Vector3 local_normal = Vector3( 0, 0, 0 );
+
+                    if ( bc.inside )
                     {
-                        axis = 1;
-                        max_val = d.y;
+                        if ( d.x <= 0.0f && d.y <= 0.0f && d.z <= 0.0f )
+                        {
+                            continue;
+                        }
+                        // Find the axis with maximum penetration (most outside)
+                        int axis = 0;
+                        float max_val = d.x;
+                        if ( d.y > max_val )
+                        {
+                            axis = 1;
+                            max_val = d.y;
+                        }
+                        if ( d.z > max_val )
+                        {
+                            axis = 2;
+                            max_val = d.z;
+                        }
+
+                        penetration = max_val;
+                        local_normal[axis] = local_pos[axis] > 0 ? -1.0f : 1.0f;
                     }
-                    if ( d.z > max_val )
+                    else
                     {
-                        axis = 2;
-                        max_val = d.z;
+                        if ( d.x >= 0.0f || d.y >= 0.0f || d.z >= 0.0f )
+                        {
+                            continue;
+                        }
+                        // Find the axis with minimum penetration (closest face)
+                        int axis = 0;
+                        float max_d = d.x;
+                        if ( d.y > max_d )
+                        {
+                            axis = 1;
+                            max_d = d.y;
+                        }
+                        if ( d.z > max_d )
+                        {
+                            axis = 2;
+                            max_d = d.z;
+                        }
+
+                        penetration = -max_d;
+                        local_normal[axis] = local_pos[axis] > 0 ? 1.0f : -1.0f;
                     }
 
-                    penetration = max_val;
-                    local_normal[axis] = local_pos[axis] > 0 ? -1.0f : 1.0f;
-                }
-                else
-                {
-                    if ( d.x >= 0.0f || d.y >= 0.0f || d.z >= 0.0f )
+                    Vector3 normal = bc.basis.xform( local_normal );
+
+                    // XPBD collision constraint
+                    float w = p.inv_mass;
+                    if ( w == 0.0f )
                     {
                         continue;
                     }
-                    // Find the axis with minimum penetration (closest face)
-                    int axis = 0;
-                    float max_d = d.x;
-                    if ( d.y > max_d )
+                    float d_lambda = penetration / w;
+                    p.position += d_lambda * w * normal;
+
+                    // Friction
+                    if ( bc.friction > 0.0f )
                     {
-                        axis = 1;
-                        max_d = d.y;
-                    }
-                    if ( d.z > max_d )
-                    {
-                        axis = 2;
-                        max_d = d.z;
-                    }
-
-                    penetration = -max_d;
-                    local_normal[axis] = local_pos[axis] > 0 ? 1.0f : -1.0f;
-                }
-
-                Vector3 normal = bc.basis.xform( local_normal );
-
-                // XPBD collision constraint
-                float w = p.inv_mass;
-                if ( w == 0.0f )
-                {
-                    continue;
-                }
-                float d_lambda = penetration / w;
-                p.position += d_lambda * w * normal;
-
-                // Friction
-                if ( bc.friction > 0.0f )
-                {
-                    Vector3 contact_move =
-                        ( bc.velocity +
-                          bc.angular_velocity.cross( p.position - bc.position ) ) *
-                        sub_delta * bc.velocity_factor;
-                    Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
-                    Vector3 normal_component = relative_move.dot( normal ) * normal;
-                    Vector3 tangent_component = relative_move - normal_component;
-                    float lateral_dist = tangent_component.length();
-                    if ( lateral_dist > 0.0001f )
-                    {
-                        float friction_reduction =
-                            UtilityFunctions::min( bc.friction * penetration, lateral_dist );
-                        p.position -= tangent_component.normalized() * friction_reduction;
+                        Vector3 contact_move =
+                            ( bc.velocity +
+                              bc.angular_velocity.cross( p.position - bc.position ) ) *
+                            sub_delta * bc.velocity_factor;
+                        Vector3 relative_move = ( p.position - p.previous_position ) - contact_move;
+                        Vector3 normal_component = relative_move.dot( normal ) * normal;
+                        Vector3 tangent_component = relative_move - normal_component;
+                        float lateral_dist = tangent_component.length();
+                        if ( lateral_dist > 0.0001f )
+                        {
+                            float friction_reduction =
+                                UtilityFunctions::min( bc.friction * penetration, lateral_dist );
+                            p.position -= tangent_component.normalized() * friction_reduction;
+                        }
                     }
                 }
             }
@@ -2214,6 +2226,7 @@ void WiggleKitServer::warmup( int p_iterations, const PackedInt32Array &p_partic
     {
         return;
     }
+    PROFILE_FUNCTION();
 
     // 1. Back up state
     TightLocalVector<bool> particle_active_backup;
