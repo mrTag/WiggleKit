@@ -53,8 +53,16 @@ if(MSVC)
     # Also apply to external libraries we're building
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
-    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG")
+    # Generate debug info even in Release, embedded in .obj (Ninja-parallel safe)
+    target_compile_options( ${PROJECT_NAME} PRIVATE
+        $<$<CONFIG:Release,RelWithDebInfo>:/Z7> )
+
+    # Emit a PDB at link time, but keep release optimizations
+    # (/DEBUG alone disables /OPT:REF and /OPT:ICF)
+    target_link_options( ${PROJECT_NAME} PRIVATE
+        $<$<CONFIG:Release,RelWithDebInfo>:/DEBUG>
+        $<$<CONFIG:Release,RelWithDebInfo>:/OPT:REF>
+        $<$<CONFIG:Release,RelWithDebInfo>:/OPT:ICF> )
 endif()
 
 # LIB_ARCH is the architecture being built. It is set to the build system's architecture.
@@ -80,6 +88,8 @@ set_target_properties( ${PROJECT_NAME}
         VISIBILITY_INLINES_HIDDEN true
         RUNTIME_OUTPUT_DIRECTORY "${BUILD_OUTPUT_DIR}/${LIB_DIR}"
         LIBRARY_OUTPUT_DIRECTORY "${BUILD_OUTPUT_DIR}/${LIB_DIR}"
+        # Put the .pdb next to the .dll
+        PDB_OUTPUT_DIRECTORY "${BUILD_OUTPUT_DIR}/${LIB_DIR}"
 )
 
 if( NOT DEFINED CMAKE_DEBUG_POSTFIX )
